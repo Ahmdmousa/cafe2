@@ -5,27 +5,75 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Advanced Cafe POS System</title>
 
-    <!-- UUID for generating unique IDs -->
     <script src="https://unpkg.com/uuid@9/dist/umd/uuid.min.js"></script>
-    <!-- React and ReactDOM for building the UI -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <!-- Babel for JSX transformation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- EmailJS for sending emails (optional) -->
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-    <!-- Recharts for charts -->
+    <!-- Ensured Recharts library is included -->
     <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
 
-    <!-- Link to the stylesheet -->
     <link rel="stylesheet" href="Style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
+    <style>
+        /* Basic loading message style */
+        #loading-message {
+            display: flex;
+            flex-direction: column; /* Stack message lines */
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-size: 1.2em;
+            color: #555;
+            text-align: center;
+            padding: 20px;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        #loading-message p {
+            margin: 5px 0;
+        }
+    </style>
 </head>
 <body>
-    <!-- Root element for the React application -->
-    <div id="root"></div>
+    <div id="root">
+        <div id="loading-message">
+            <p>Loading POS System...</p>
+            <p style="font-weight: bold; color: #d9534f;">If this message persists and you see errors in the console (like "Invalid URL" or CORS errors):</p>
+            <p>Please run this page from a local web server.</p>
+            <p>Do NOT open the <code>index.html</code> file directly in your browser.</p>
+            <p><em>(e.g., using VS Code's "Live Server" extension or Python's <code>http.server</code> command)</em></p>
+            <hr style="width:50%; margin: 15px 0;">
+            <p style="font-size: 0.9em;">Also, ensure 'POS_Main.js' and 'Style.css' are in the same directory as this file.</p>
+        </div>
+    </div>
 
-    <!-- Main application script -->
-    <script type="text/babel" src="POS Main.js"></script>
+    {/*
+        IMPORTANT:
+        For Babel to correctly load and transpile 'POS_Main.js' using XMLHttpRequest,
+        this index.html file MUST be served via a local HTTP server, not opened directly as a file (file:///...).
+        Opening directly from the file system often leads to "Invalid URL" or CORS-related errors for XHR requests.
+
+        Ensure 'POS_Main.js' is correctly named (with underscore, exact case) and in the same directory.
+    */}
+    <script type="text/babel" data-src="POS_Main.js"></script>
+
+    <script type="text/javascript">
+        const rootElement = document.getElementById('root');
+        const loadingMessageElement = document.getElementById('loading-message');
+
+        const observer = new MutationObserver(function(mutationsList, observer) {
+            if (rootElement.children.length > 1 || (rootElement.firstChild && rootElement.firstChild.id !== 'loading-message')) {
+                if (loadingMessageElement) {
+                    loadingMessageElement.style.display = 'none';
+                }
+                observer.disconnect();
+            }
+        });
+
+        if (rootElement && loadingMessageElement) {
+            observer.observe(rootElement, { childList: true, subtree: true });
+        }
+    </script>
 </body>
 </html>
