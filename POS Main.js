@@ -1,11 +1,11 @@
+// POS Main.js
+
 console.log("React script start - Multi-Order Table Version with Suspend/Resume & Settings");
 
 const { useState, useEffect, useMemo, useCallback } = React;
 
 // Helper Functions and Initial Data
 const initialProductsData = [
-    // Using a condensed list for brevity in this example,
-    // but your full initialProductsData can be used here.
     { id: 'p1', name: 'Espresso', price: 3.50, category: 'Coffee', image: '☕', imageUrl: '', stock: 100, minStock: 10, productType: 'standard', bundleItems: [], variationGroups: [], modifierGroups: [], isTemporarilyUnavailable: false, isArchived: false },
     { id: 'p2', name: 'Cappuccino', price: 4.50, category: 'Coffee', image: '☕', imageUrl: '', stock: 80, minStock: 10, productType: 'standard', bundleItems: [], variationGroups: [], modifierGroups: [], isTemporarilyUnavailable: false, isArchived: false },
     {
@@ -43,26 +43,25 @@ const initialProductsData = [
     },
 ];
 
-const LOYALTY_POINT_VALUE = 0.01; // 1 point = $0.01 (100 points = $1.00)
-const DEFAULT_TAX_RATE = 0.08; // Default 8%
-const DEFAULT_SERVICE_CHARGE_RATE = 0.0; // Default 0%
+const LOYALTY_POINT_VALUE = 0.01;
+const DEFAULT_TAX_RATE = 0.08;
+const DEFAULT_SERVICE_CHARGE_RATE = 0.0;
 
-// --- Initial Settings Structure ---
 const initialSettings = {
     cafeName: 'My Cafe',
     cafeAddress: '123 Main Street, Anytown',
     cafePhone: '555-1234',
     cafeWebsite: 'www.mycafe.com',
-    cafeLogoUrl: 'https://placehold.co/150x80/EBF8FF/3B82F6?text=My+Cafe+Logo', // Placeholder logo
+    cafeLogoUrl: 'https://placehold.co/150x80/EBF8FF/3B82F6?text=My+Cafe+Logo',
     receiptHeaderMsg: 'Thank You For Your Visit!',
     receiptFooterMsg: 'Follow us @mycafe',
     showReceiptLogo: true,
     taxRate: DEFAULT_TAX_RATE,
     serviceChargeRate: DEFAULT_SERVICE_CHARGE_RATE,
-    adminPin: '', // Empty means no PIN protection initially
-    // users: [{id: 'user1', username: 'admin', role: 'admin', pin: '1234'}] // Example for future full user management
+    adminPin: '',
 };
 
+const initialExpenses = [];
 
 function useLocalStorage(key, initialValue) {
     const [storedValue, setStoredValue] = useState(() => {
@@ -70,18 +69,16 @@ function useLocalStorage(key, initialValue) {
             const item = window.localStorage.getItem(key);
             if (item) {
                 const parsed = JSON.parse(item);
-                // --- Settings Migration/Initialization ---
                 if (key === 'posSettings_v1') {
                     return {
-                        ...initialSettings, // Start with defaults
-                        ...parsed, // Override with stored values
-                        // Ensure all fields from initialSettings are present
+                        ...initialSettings,
+                        ...parsed,
                         taxRate: typeof parsed.taxRate === 'number' ? parsed.taxRate : initialSettings.taxRate,
                         serviceChargeRate: typeof parsed.serviceChargeRate === 'number' ? parsed.serviceChargeRate : initialSettings.serviceChargeRate,
                         showReceiptLogo: typeof parsed.showReceiptLogo === 'boolean' ? parsed.showReceiptLogo : initialSettings.showReceiptLogo,
+                        cafeLogoUrl: parsed.cafeLogoUrl || initialSettings.cafeLogoUrl,
                     };
                 }
-                // --- End Settings Migration ---
                 if (key === 'posProducts_v_multiOrder_1' && Array.isArray(parsed)) {
                     return parsed.map(p => ({
                         ...p,
@@ -105,6 +102,12 @@ function useLocalStorage(key, initialValue) {
                         paymentMethodsUsed: order.paymentMethodsUsed && order.paymentMethodsUsed.length > 0 ? order.paymentMethodsUsed : [{method: order.paymentMethod || 'cash', amount: order.total, received: order.amountReceived || order.total }],
                         paidWithLoyaltyAmount: order.paidWithLoyaltyAmount || 0,
                         loyaltyPointsRedeemed: order.loyaltyPointsRedeemed || 0,
+                        notes: order.notes || '',
+                        returnedItems: order.returnedItems || [],
+                        returnReason: order.returnReason || '',
+                        returnDate: order.returnDate || null,
+                        originalOrderId: order.originalOrderId || null,
+                        type: order.type || 'sale',
                     }));
                 }
                 if (key === 'posTables_v_multiOrder_1' && Array.isArray(parsed)) {
@@ -119,12 +122,16 @@ function useLocalStorage(key, initialValue) {
                         status: t.status || 'available'
                     }));
                 }
+                if (key === 'posExpenses_v1' && Array.isArray(parsed)) {
+                    return parsed.map(exp => ({
+                        ...exp,
+                        date: exp.date || new Date().toISOString().split('T')[0]
+                    }));
+                }
                 return parsed;
             }
-            // Initialize for new keys or if localStorage is empty
-            if (key === 'posSettings_v1') {
-                return initialSettings;
-            }
+            if (key === 'posSettings_v1') return initialSettings;
+            if (key === 'posExpenses_v1') return initialExpenses;
             if (key === 'posOrderHistory_v_multiOrder_1' && Array.isArray(initialValue)) {
                 return initialValue.map(order => ({
                     ...order,
@@ -132,6 +139,12 @@ function useLocalStorage(key, initialValue) {
                     paymentMethodsUsed: order.paymentMethodsUsed || [],
                     paidWithLoyaltyAmount: order.paidWithLoyaltyAmount || 0,
                     loyaltyPointsRedeemed: order.loyaltyPointsRedeemed || 0,
+                    notes: order.notes || '',
+                    returnedItems: order.returnedItems || [],
+                    returnReason: order.returnReason || '',
+                    returnDate: order.returnDate || null,
+                    originalOrderId: order.originalOrderId || null,
+                    type: order.type || 'sale',
                 }));
             }
             return initialValue;
@@ -770,21 +783,19 @@ function DashboardView({ orderHistory, products, customers }) {
     const paymentMethodStats = useMemo(() => {
         const stats = {};
         orderHistory.forEach(order => {
-            // --- MODIFIED: Aggregate from paymentMethodsUsed array ---
             if (order.paymentMethodsUsed && Array.isArray(order.paymentMethodsUsed)) {
                 order.paymentMethodsUsed.forEach(pm => {
                     const method = pm.method || 'Other';
                     if (!stats[method]) stats[method] = { count: 0, total: 0 };
-                    stats[method].count += 1; // Count each method instance once per order if multiple methods used in one order
+                    stats[method].count += 1;
                     stats[method].total += pm.amount;
                 });
-            } else if (order.paymentMethod) { // Fallback for older orders
+            } else if (order.paymentMethod) {
                  const method = order.paymentMethod || 'Other';
                  if (!stats[method]) stats[method] = { count: 0, total: 0 };
                  stats[method].count += 1;
                  stats[method].total += order.total;
             }
-            // --- END MODIFIED ---
         });
         return stats;
     }, [orderHistory]);
@@ -825,30 +836,45 @@ function DashboardView({ orderHistory, products, customers }) {
     );
 }
 
-function OrderHistoryView({ orderHistory, markOrderAsDelivered, tables, onResumeOrder }) {
+function OrderHistoryView({ orderHistory, markOrderAsDelivered, tables, onResumeOrder, onInitiateReturn }) {
      return (
         <div className="history-container">
             <h2>Order History</h2>
             {orderHistory.length === 0 ? (<p className="empty-message">No orders yet</p>) : (
                 <div className="history-order-grid">
-                    {orderHistory.slice().reverse().map(order => (
-                        <div key={order.id} className="history-order-card">
+                    {orderHistory.slice().reverse().map(order => {
+                        const isReturnable = order.status === 'Paid' || order.status === 'Delivered';
+                        let orderDisplayStatus = order.status;
+                        if (order.type === 'return') {
+                            orderDisplayStatus = `Returned (Ref. #${order.originalOrderId?.slice(0,6)})`;
+                        } else if (order.returnedItems && order.returnedItems.length > 0) {
+                            const allItemsReturned = order.items.every(item => {
+                                const returnedItem = order.returnedItems.find(ri => ri.orderItemId === item.orderItemId);
+                                return returnedItem && returnedItem.quantity >= item.quantity;
+                            });
+                            if (allItemsReturned) {
+                                orderDisplayStatus = 'Fully Returned';
+                            } else {
+                                orderDisplayStatus = 'Partially Returned';
+                            }
+                        }
+
+                        return (
+                        <div key={order.id} className={`history-order-card ${order.type === 'return' ? 'return-order-card' : ''}`}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid #eee', paddingBottom: '8px' }}>
-                                <h3 style={{ margin: 0 }}>Order #{order.id.slice(0, 8)}</h3>
-                                <span className={`order-status ${order.status ? order.status.toLowerCase().replace(/[\s/_]+/g, '-') : 'processing'}`}>
-                                    {order.status === 'Suspended' ? 'Suspended' : (order.status ? order.status.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').trim() : 'Processing')}
+                                <h3 style={{ margin: 0 }}>{order.type === 'return' ? 'Return ' : 'Order '}#{order.id.slice(0, 8)}</h3>
+                                <span className={`order-status ${orderDisplayStatus ? orderDisplayStatus.toLowerCase().replace(/[\s/_()#]+/g, '-') : 'processing'}`}>
+                                    {orderDisplayStatus === 'Suspended' ? 'Suspended' : (orderDisplayStatus ? orderDisplayStatus.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').trim() : 'Processing')}
                                 </span>
                             </div>
                             <p>Table: {order.tableId && tables ? tables.find(t=>t.id === order.tableId)?.name || 'N/A' : (order.status === 'Suspended' && !order.tableId ? 'Suspended Walk-in' : 'Walk-in/Takeaway')}</p>
                             <p>Order Label/Customer: {order.linkedActiveOrderLabel || order.customer} {order.customerId ? `(ID: ${order.customerId.slice(0,6)})` : ''}</p>
                             <p>Date: {new Date(order.date).toLocaleString()}</p>
-                            {/* --- MODIFIED: Display payment methods used --- */}
                             <p>Payment(s): {
                                 order.paymentMethodsUsed && order.paymentMethodsUsed.length > 0
                                 ? order.paymentMethodsUsed.map(pm => `${pm.method.charAt(0).toUpperCase() + pm.method.slice(1)} ($${pm.amount.toFixed(2)})${pm.method === 'loyalty' && pm.points ? ` (${pm.points} pts)` : ''}`).join(', ')
-                                : (order.paymentMethod ? order.paymentMethod.toUpperCase() : 'N/A') // Fallback for older orders
+                                : (order.paymentMethod ? order.paymentMethod.toUpperCase() : 'N/A')
                             }</p>
-                            {/* --- END MODIFIED --- */}
                             <p>Items: {order.items.reduce((sum, item) => sum + item.quantity, 0)}</p>
                             <ul>{order.items.map(item => (
                                 <li key={item.orderItemId || item.productId + (item.selectedOptions ? item.selectedOptions.map(o=>o.optionId).join('') : '')}>
@@ -858,19 +884,38 @@ function OrderHistoryView({ orderHistory, markOrderAsDelivered, tables, onResume
                                     {item.productType !== 'bundle' && item.selectedOptions && item.selectedOptions.length > 0 && (<div className="item-options-display">{item.selectedOptions.map(opt => `${opt.optionName}`).join(', ')}</div>)}
                                 </li>
                             ))}</ul>
+                            {order.notes && <p className="order-notes-display-history"><strong>Notes:</strong> {order.notes}</p>}
+                             {order.returnedItems && order.returnedItems.length > 0 && (
+                                <div className="returned-items-history">
+                                    <strong>Returned Items:</strong>
+                                    <ul>
+                                        {order.returnedItems.map(ri => (
+                                            <li key={ri.orderItemId}>
+                                                {ri.displayName} x{ri.quantity} (-${(ri.priceAtReturn * ri.quantity).toFixed(2)})
+                                            </li>
+                                        ))}
+                                    </ul>
+                                    {order.returnReason && <p><em>Reason: {order.returnReason}</em></p>}
+                                </div>
+                            )}
                             <div style={{marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #eee'}}>
                                 <p>Subtotal: ${order.subtotal.toFixed(2)}</p>
                                 { (order.appliedDiscountInfo && order.appliedDiscountInfo.value > 0 ? order.discount : order.discount) > 0 && <p>Discount: -${(order.appliedDiscountInfo && order.appliedDiscountInfo.value > 0 ? order.discount : order.discount).toFixed(2)}</p>}
                                 <p>Tax: ${order.tax.toFixed(2)}</p>
                                 <p style={{fontWeight: 'bold'}}>Total: ${order.total.toFixed(2)}</p>
+                                {order.type === 'return' && <p style={{fontWeight: 'bold', color: 'var(--danger)'}}>Refunded Amount: -${order.total.toFixed(2)}</p>}
                             </div>
-                            {order.status === 'Suspended' ? (
+                            {order.status === 'Suspended' && (
                                 <button className="btn btn-primary" onClick={() => onResumeOrder(order.id)} style={{marginTop: '10px'}}>Resume Order</button>
-                            ) : (order.status === 'ReadyForDeliveryPickup' || order.status === 'ActiveTableOrder' || order.status === 'BillRequestedTableOrder') && (
+                            )}
+                            {(order.status === 'ReadyForDeliveryPickup' || order.status === 'ActiveTableOrder' || order.status === 'BillRequestedTableOrder') && (
                                 <button className="btn btn-mark-delivered" onClick={() => markOrderAsDelivered(order.id)} style={{marginTop: '10px'}}> Mark as Delivered/Collected </button>
                             )}
+                            {isReturnable && order.type === 'sale' && (!order.returnedItems || order.returnedItems.length < order.items.length) && ( // Show if not all items returned
+                                <button className="btn btn-warning" onClick={() => onInitiateReturn(order)} style={{marginTop: '10px'}}>Return Items</button>
+                            )}
                         </div>
-                    ))}
+                    )})}
                 </div>
             )}
         </div>
@@ -892,6 +937,7 @@ function KitchenDisplayView({ kitchenOrders, markOrderComplete }) {
                         <p>For: {order.customer} (Main Order: #{order.mainOrderId.slice(0,6)})</p>
                         <p>Time: {new Date(order.timestamp).toLocaleTimeString()}</p>
                         <ul>{order.items.map(item => ( <li key={item.id + '-' + order.id}> {item.name} x{item.quantity} {item.options && <div style={{fontSize: '0.9em', color: 'var(--grey)'}}>&nbsp;&nbsp;({item.options})</div>} </li> ))}</ul>
+                        {order.notes && <p className="order-notes-display-kds"><strong>Notes:</strong> {order.notes}</p>}
                         <button className="complete-btn" onClick={() => markOrderComplete(order.id)}>Mark as Complete</button>
                     </div>
                 ))}
@@ -903,6 +949,7 @@ function KitchenDisplayView({ kitchenOrders, markOrderComplete }) {
                         <p>For: {order.customer} (Main Order: #{order.mainOrderId.slice(0,6)})</p>
                         <p>Time: {new Date(order.timestamp).toLocaleTimeString()}</p>
                         <ul>{order.items.map(item => ( <li key={item.id + '-' + order.id}>{item.name} x{item.quantity} {item.options && <div style={{fontSize: '0.9em', color: 'var(--grey)'}}>&nbsp;&nbsp;({item.options})</div>}</li> ))}</ul>
+                        {order.notes && <p className="order-notes-display-kds"><strong>Notes:</strong> {order.notes}</p>}
                     </div>
                 ))}
             </div></>)}
@@ -914,7 +961,7 @@ function SupportView({ addSupportTicket, supportTickets, emailJsReady }) {
     const [inquiryForm, setInquiryForm] = useState({ name: '', email: '', message: '' });
     const [showConfirmation, setShowConfirmation] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const recipientEmail = "ahmdmo2010@gmail.com"; 
+    const recipientEmail = "ahmdmo2010@gmail.com";
 
     const handleInquiryChange = (e) => { const { name, value } = e.target; setInquiryForm(prev => ({ ...prev, [name]: value })); };
     const handleInquirySubmit = (e) => {
@@ -1006,21 +1053,19 @@ function CustomersView({ customers, addCustomer, updateCustomer, removeCustomer,
                     <div className="form-group"><label className="form-label">Name:</label><input type="text" name="name" value={customerForm.name} onChange={handleInputChange} className="form-input" required /></div>
                     <div className="form-group"><label className="form-label">Email:</label><input type="email" name="email" value={customerForm.email} onChange={handleInputChange} className="form-input" /></div>
                     <div className="form-group"><label className="form-label">Phone:</label><input type="tel" name="phone" value={customerForm.phone} onChange={handleInputChange} className="form-input" /></div>
-                    {/* --- MODIFIED: Loyalty points input disabled when editing --- */}
                     <div className="form-group">
                         <label className="form-label">Loyalty Points:</label>
-                        <input 
-                            type="number" 
-                            name="loyaltyPoints" 
-                            value={customerForm.loyaltyPoints} 
-                            onChange={handleInputChange} 
-                            className="form-input" 
-                            min="0" 
-                            disabled={isEditing} // Disable if editing
+                        <input
+                            type="number"
+                            name="loyaltyPoints"
+                            value={customerForm.loyaltyPoints}
+                            onChange={handleInputChange}
+                            className="form-input"
+                            min="0"
+                            disabled={isEditing}
                         />
                         {isEditing && <small className="form-text text-muted">Loyalty points are updated via transactions.</small>}
                     </div>
-                    {/* --- END MODIFIED --- */}
                     <div className="form-group form-group-full"><label className="form-label">Notes:</label><textarea name="notes" value={customerForm.notes} onChange={handleInputChange} className="form-textarea" rows="3" /></div>
                     <div className="form-group" style={{ gridColumn: '1 / -1', marginTop: '20px', display: 'flex', gap: '10px' }}>
                         <button type="submit" className="btn btn-primary" style={{width: 'auto', paddingLeft: '30px', paddingRight: '30px'}}>{isEditing ? 'Update Customer' : 'Add Customer'}</button>
@@ -1041,6 +1086,75 @@ function CustomersView({ customers, addCustomer, updateCustomer, removeCustomer,
         </div>
     );
 }
+
+// --- AddCustomerModalPOS Component ---
+function AddCustomerModalPOS({ onClose, onAddCustomerAndSelect, initialPhone = '' }) {
+    const initialFormState = { name: '', email: '', phone: initialPhone, notes: '' };
+    const [customerForm, setCustomerForm] = useState(initialFormState);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleInputChange = (e) => {
+        const { name, value } = e.target;
+        setCustomerForm(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!customerForm.name.trim()) {
+            alert("Customer name is required.");
+            return;
+        }
+        setIsSubmitting(true);
+        // Here, we'd typically call a function passed via props to add the customer
+        // This function should handle adding to the main customers list and then selecting
+        onAddCustomerAndSelect({
+            name: customerForm.name.trim(),
+            email: customerForm.email.trim(),
+            phone: customerForm.phone.trim(),
+            notes: customerForm.notes.trim()
+        });
+        // No need to reset form here as the modal will close
+        // setIsSubmitting(false); // This would be handled by the parent closing the modal
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={(e) => e.stopPropagation()} style={{maxWidth: '450px'}}>
+                <div className="modal-header">
+                    <h3 className="modal-title">Add New Customer</h3>
+                    <button onClick={onClose} className="close-btn">&times;</button>
+                </div>
+                <div className="modal-content">
+                    <form onSubmit={handleSubmit} className="product-management-form" style={{gridTemplateColumns: '1fr'}}>
+                        <div className="form-group">
+                            <label className="form-label">Name:</label>
+                            <input type="text" name="name" value={customerForm.name} onChange={handleInputChange} className="form-input" required disabled={isSubmitting} autoFocus/>
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label">Phone:</label>
+                            <input type="tel" name="phone" value={customerForm.phone} onChange={handleInputChange} className="form-input" disabled={isSubmitting}/>
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label">Email (Optional):</label>
+                            <input type="email" name="email" value={customerForm.email} onChange={handleInputChange} className="form-input" disabled={isSubmitting}/>
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label">Notes (Optional):</label>
+                            <textarea name="notes" value={customerForm.notes} onChange={handleInputChange} className="form-textarea" rows="2" disabled={isSubmitting}/>
+                        </div>
+                        <div className="modal-actions" style={{marginTop: '10px'}}>
+                            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={isSubmitting}>Cancel</button>
+                            <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+                                {isSubmitting ? 'Adding...' : 'Add Customer'}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 
 function TableView({ tables, onOpenTableActions, selectedTableId, selectedOrderId }) {
     return (
@@ -1193,58 +1307,77 @@ function TableActionsModal({
     );
 }
 
-// --- SettingsView Component ---
 function SettingsView({ settings, onUpdateSettings }) {
     const [currentSettings, setCurrentSettings] = useState(settings);
     const [pinConfirm, setPinConfirm] = useState('');
     const [showPinMismatch, setShowPinMismatch] = useState(false);
+    const [logoPreview, setLogoPreview] = useState(settings.cafeLogoUrl);
 
     useEffect(() => {
-        setCurrentSettings(settings); // Keep local form state in sync if settings prop changes
-        setPinConfirm(settings.adminPin || ''); // Initialize confirm PIN
+        setCurrentSettings(settings);
+        setPinConfirm(settings.adminPin || '');
+        setLogoPreview(settings.cafeLogoUrl);
     }, [settings]);
 
     const handleSettingChange = (e) => {
-        const { name, value, type, checked } = e.target;
-        let processedValue = type === 'checkbox' ? checked : value;
+        const { name, value, type, checked, files } = e.target;
+        let processedValue;
 
-        if (name === "taxRate" || name === "serviceChargeRate") {
-            processedValue = parseFloat(value) / 100; // Store as decimal
-            if (isNaN(processedValue) || processedValue < 0) processedValue = 0;
-            if (processedValue > 1 && name === "taxRate") processedValue = 1; // Max 100% tax
-            if (processedValue > 1 && name === "serviceChargeRate") processedValue = 1; // Max 100% service charge
-        } else if (name === "adminPin") {
-            // Basic PIN validation (e.g., only numbers, certain length) could be added here
-            // For now, just update
-            setShowPinMismatch(false); // Reset mismatch on PIN change
+        if (name === "cafeLogoUrlFile") {
+            if (files && files[0]) {
+                const reader = new FileReader();
+                reader.onload = (upload) => {
+                    const dataUrl = upload.target.result;
+                    setCurrentSettings(prev => ({ ...prev, cafeLogoUrl: dataUrl }));
+                    setLogoPreview(dataUrl);
+                };
+                reader.readAsDataURL(files[0]);
+            }
+            return;
+        } else {
+            processedValue = type === 'checkbox' ? checked : value;
         }
 
 
+        if (name === "taxRate" || name === "serviceChargeRate") {
+            processedValue = parseFloat(value) / 100;
+            if (isNaN(processedValue) || processedValue < 0) processedValue = 0;
+            if (processedValue > 1) processedValue = 1;
+        } else if (name === "adminPin") {
+            setShowPinMismatch(false);
+        }
         setCurrentSettings(prev => ({ ...prev, [name]: processedValue }));
     };
-    
+
     const handlePinConfirmChange = (e) => {
         setPinConfirm(e.target.value);
-        setShowPinMismatch(false); // Reset mismatch on confirm PIN change
+        setShowPinMismatch(false);
     };
 
     const handleSave = () => {
-        if (currentSettings.adminPin !== pinConfirm) {
+        if (currentSettings.adminPin && currentSettings.adminPin !== pinConfirm) {
             setShowPinMismatch(true);
             alert("Admin PINs do not match. Please re-enter.");
             return;
+        }
+        if (!currentSettings.adminPin && pinConfirm) {
+            if (currentSettings.adminPin === '' && pinConfirm === '') {
+            } else {
+                setShowPinMismatch(true);
+                alert("Admin PIN cannot be blank if you are trying to set or confirm it. To remove PIN, leave both fields blank.");
+                return;
+            }
         }
         onUpdateSettings(currentSettings);
         alert("Settings saved!");
     };
 
     return (
-        <div className="settings-container admin-container"> {/* Re-use admin-container style */}
+        <div className="settings-container">
             <h2>Settings</h2>
-
-            <div className="admin-section">
+            <div className="settings-group-card">
                 <h3>Cafe Information</h3>
-                <div className="product-management-form"> {/* Re-use for layout */}
+                <div className="settings-form-grid">
                     <div className="form-group">
                         <label className="form-label">Cafe Name:</label>
                         <input type="text" name="cafeName" value={currentSettings.cafeName || ''} onChange={handleSettingChange} className="form-input" />
@@ -1262,16 +1395,23 @@ function SettingsView({ settings, onUpdateSettings }) {
                         <input type="url" name="cafeWebsite" value={currentSettings.cafeWebsite || ''} onChange={handleSettingChange} className="form-input" />
                     </div>
                     <div className="form-group form-group-full">
-                        <label className="form-label">Logo URL:</label>
-                        <input type="url" name="cafeLogoUrl" value={currentSettings.cafeLogoUrl || ''} onChange={handleSettingChange} className="form-input" />
-                        {currentSettings.cafeLogoUrl && <img src={currentSettings.cafeLogoUrl} alt="Cafe Logo Preview" style={{maxWidth: '150px', maxHeight: '80px', marginTop: '10px', border: '1px solid var(--light-grey)'}} onError={(e) => e.target.style.display='none'} onLoad={(e) => e.target.style.display='block'}/>}
+                        <label className="form-label">Logo Image (Upload):</label>
+                        <input type="file" name="cafeLogoUrlFile" accept="image/*" onChange={handleSettingChange} className="form-input" />
+                        {logoPreview &&
+                            <img
+                                src={logoPreview}
+                                alt="Cafe Logo Preview"
+                                className="settings-logo-preview"
+                                onError={(e) => { e.target.style.display='none'; const placeholder = document.createElement('span'); placeholder.textContent = 'Invalid Logo URL or Image'; e.target.parentNode.appendChild(placeholder);}}
+                                onLoad={(e) => e.target.style.display='block'}
+                            />
+                        }
                     </div>
                 </div>
             </div>
-
-            <div className="admin-section">
+            <div className="settings-group-card">
                 <h3>Receipt Settings</h3>
-                <div className="product-management-form">
+                <div className="settings-form-grid">
                     <div className="form-group form-group-full">
                         <label className="form-label">Receipt Header Message:</label>
                         <input type="text" name="receiptHeaderMsg" value={currentSettings.receiptHeaderMsg || ''} onChange={handleSettingChange} className="form-input" />
@@ -1280,16 +1420,15 @@ function SettingsView({ settings, onUpdateSettings }) {
                         <label className="form-label">Receipt Footer Message:</label>
                         <input type="text" name="receiptFooterMsg" value={currentSettings.receiptFooterMsg || ''} onChange={handleSettingChange} className="form-input" />
                     </div>
-                    <div className="form-group form-group-checkbox" style={{gridColumn: '1 / -1'}}>
-                        <input type="checkbox" id="showReceiptLogo" name="showReceiptLogo" checked={currentSettings.showReceiptLogo} onChange={handleSettingChange} />
-                        <label htmlFor="showReceiptLogo" className="form-label" style={{marginBottom: 0}}>Show Logo on Receipt</label>
+                    <div className="form-group form-group-checkbox form-group-full">
+                        <input type="checkbox" id="showReceiptLogoSettings" name="showReceiptLogo" checked={currentSettings.showReceiptLogo} onChange={handleSettingChange} />
+                        <label htmlFor="showReceiptLogoSettings" className="form-label">Show Logo on Receipt</label>
                     </div>
                 </div>
             </div>
-
-            <div className="admin-section">
+            <div className="settings-group-card">
                 <h3>Financial Settings</h3>
-                <div className="product-management-form">
+                <div className="settings-form-grid">
                      <div className="form-group">
                         <label className="form-label">Tax Rate (%):</label>
                         <input type="number" name="taxRate" value={(currentSettings.taxRate * 100).toFixed(2)} onChange={handleSettingChange} className="form-input" step="0.01" min="0" max="100" />
@@ -1300,49 +1439,147 @@ function SettingsView({ settings, onUpdateSettings }) {
                     </div>
                 </div>
             </div>
-            
-            <div className="admin-section">
+            <div className="settings-group-card">
                 <h3>Security</h3>
-                 <div className="product-management-form">
+                 <div className="settings-form-grid">
                     <div className="form-group">
-                        <label className="form-label">Admin PIN (4-8 digits, numbers only, leave blank for no PIN):</label>
-                        <input 
-                            type="password" 
-                            name="adminPin" 
-                            value={currentSettings.adminPin || ''} 
-                            onChange={handleSettingChange} 
-                            className="form-input" 
-                            pattern="\d{4,8}"
-                            title="Enter 4 to 8 digits"
+                        <label className="form-label">Admin PIN:</label>
+                        <input
+                            type="password"
+                            name="adminPin"
+                            value={currentSettings.adminPin || ''}
+                            onChange={handleSettingChange}
+                            className="form-input"
+                            placeholder="4-8 digits, or blank"
+                            pattern="\d{4,8}|"
+                            title="Enter 4 to 8 digits, or leave blank for no PIN"
                             maxLength="8"
                         />
+                         <small className="form-text-muted">Leave blank for no PIN protection.</small>
                     </div>
                     <div className="form-group">
                         <label className="form-label">Confirm Admin PIN:</label>
-                        <input 
-                            type="password" 
-                            name="adminPinConfirm" 
-                            value={pinConfirm} 
-                            onChange={handlePinConfirmChange} 
+                        <input
+                            type="password"
+                            name="adminPinConfirm"
+                            value={pinConfirm}
+                            onChange={handlePinConfirmChange}
                             className={`form-input ${showPinMismatch ? 'input-error' : ''}`}
-                            pattern="\d{4,8}"
+                            placeholder="Confirm PIN if setting/changing"
+                            pattern="\d{4,8}|"
                             maxLength="8"
                         />
-                         {showPinMismatch && <small style={{color: 'var(--danger)'}}>PINs do not match.</small>}
+                         {showPinMismatch && <small className="error-message">PINs do not match.</small>}
                     </div>
                 </div>
             </div>
-
-            <div className="form-group" style={{ marginTop: '30px', display: 'flex', justifyContent: 'center' }}>
-                <button onClick={handleSave} className="btn btn-primary" style={{ padding: '12px 30px', fontSize: '16px' }}>Save Settings</button>
+            <div className="settings-save-button-container">
+                <button onClick={handleSave} className="btn btn-primary btn-lg-save">Save Settings</button>
             </div>
         </div>
     );
 }
-// --- End SettingsView Component ---
+
+// --- ExpensesView Component ---
+function ExpensesView({ expenses, onAddExpense, onRemoveExpense }) {
+    const initialExpenseForm = { description: '', amount: '', date: new Date().toISOString().split('T')[0], category: '' };
+    const [expenseForm, setExpenseForm] = useState(initialExpenseForm);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleExpenseChange = (e) => {
+        const { name, value } = e.target;
+        setExpenseForm(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleAddExpenseSubmit = (e) => {
+        e.preventDefault();
+        if (!expenseForm.description.trim() || !expenseForm.amount || parseFloat(expenseForm.amount) <= 0 || !expenseForm.date) {
+            alert("Please fill in Description, a valid Amount, and Date for the expense.");
+            return;
+        }
+        setIsSubmitting(true);
+        onAddExpense({
+            description: expenseForm.description.trim(),
+            amount: parseFloat(expenseForm.amount),
+            date: expenseForm.date,
+            category: expenseForm.category.trim() || 'Uncategorized'
+        });
+        setExpenseForm(initialExpenseForm);
+        setIsSubmitting(false);
+        alert("Expense added!");
+    };
+    
+    const sortedExpenses = useMemo(() => {
+        return [...expenses].sort((a, b) => new Date(b.date) - new Date(a.date));
+    }, [expenses]);
+
+
+    return (
+        <div className="expenses-container">
+            <h2>Manage Expenses</h2>
+            <div className="admin-section">
+                <h3>Add New Expense</h3>
+                <form onSubmit={handleAddExpenseSubmit} className="product-management-form" style={{gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', alignItems: 'end'}}>
+                    <div className="form-group">
+                        <label htmlFor="expenseDescription" className="form-label">Description:</label>
+                        <input type="text" id="expenseDescription" name="description" value={expenseForm.description} onChange={handleExpenseChange} className="form-input" required disabled={isSubmitting} />
+                    </div>
+                    <div className="form-group">
+                        <label htmlFor="expenseAmount" className="form-label">Amount ($):</label>
+                        <input type="number" id="expenseAmount" name="amount" value={expenseForm.amount} onChange={handleExpenseChange} className="form-input" step="0.01" min="0.01" required disabled={isSubmitting} />
+                    </div>
+                    <div className="form-group">
+                        <label htmlFor="expenseDate" className="form-label">Date:</label>
+                        <input type="date" id="expenseDate" name="date" value={expenseForm.date} onChange={handleExpenseChange} className="form-input" required disabled={isSubmitting} />
+                    </div>
+                    <div className="form-group">
+                        <label htmlFor="expenseCategory" className="form-label">Category (Optional):</label>
+                        <input type="text" id="expenseCategory" name="category" value={expenseForm.category} onChange={handleExpenseChange} className="form-input" placeholder="e.g., Supplies, Rent" disabled={isSubmitting} />
+                    </div>
+                    <div className="form-group" style={{alignSelf: 'end'}}>
+                        <button type="submit" className="btn btn-success" disabled={isSubmitting} style={{width: '100%'}}>
+                            {isSubmitting ? 'Adding...' : '+ Add Expense'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <div className="admin-section expense-list">
+                <h3>Recorded Expenses ({sortedExpenses.length})</h3>
+                {sortedExpenses.length > 0 ? (
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Description</th>
+                                <th>Category</th>
+                                <th style={{textAlign: 'right'}}>Amount</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {sortedExpenses.map(expense => (
+                                <tr key={expense.id}>
+                                    <td>{new Date(expense.date).toLocaleDateString()}</td>
+                                    <td>{expense.description}</td>
+                                    <td>{expense.category}</td>
+                                    <td style={{textAlign: 'right'}}>${expense.amount.toFixed(2)}</td>
+                                    <td>
+                                        <button className="btn btn-danger btn-sm" onClick={() => onRemoveExpense(expense.id)}>Delete</button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                ) : <p className="empty-message">No expenses recorded yet.</p>}
+            </div>
+        </div>
+    );
+}
+
 
 function App() {
-    console.log("App function entered - Multi-Order Version with Suspend/Resume & Settings");
+    console.log("App function entered - Multi-Order Table Version with Suspend/Resume & Settings");
     const [activeTab, setActiveTab] = useState('pos');
     const [activeCategory, setActiveCategory] = useState('All');
     const [searchTerm, setSearchTerm] = useState('');
@@ -1355,8 +1592,8 @@ function App() {
     const [products, setProducts] = useLocalStorage('posProducts_v_multiOrder_1', initialProductsData);
     const [kitchenOrders, setKitchenOrders] = useLocalStorage('posKitchenOrders_v_multiOrder_1', []);
     const [supportTickets, setSupportTickets] = useLocalStorage('posSupportTickets_v_multiOrder_1', []);
+    const [expenses, setExpenses] = useLocalStorage('posExpenses_v1', initialExpenses);
     const [discount, setDiscount] = useState({ type: 'none', value: 0 });
-    // const taxRate = 0.08; // Replaced by settings.taxRate
     const [emailJsReady, setEmailJsReady] = useState(false);
     const [showOptionsModal, setShowOptionsModal] = useState(false);
     const [productForOptions, setProductForOptions] = useState(null);
@@ -1373,17 +1610,23 @@ function App() {
 
     const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
     const [loyaltyAmountToPayInput, setLoyaltyAmountToPayInput] = useState('');
-    
+
     const [paymentSplits, setPaymentSplits] = useState([]);
     const [receiptDataForDisplay, setReceiptDataForDisplay] = useState(null);
 
-    // --- ADDED: Settings State & Admin PIN Modal State ---
     const [settings, setSettings] = useLocalStorage('posSettings_v1', initialSettings);
     const [showAdminPinModal, setShowAdminPinModal] = useState(false);
     const [enteredAdminPin, setEnteredAdminPin] = useState('');
-    const [adminAccessGranted, setAdminAccessGranted] = useState(!settings.adminPin); // Grant if no PIN set
-    const [targetAdminTab, setTargetAdminTab] = useState(''); // To redirect after PIN success
-    // --- END ADDED ---
+    const [adminAccessGranted, setAdminAccessGranted] = useState(!settings.adminPin);
+    const [targetAdminTab, setTargetAdminTab] = useState('');
+
+    const [showClearOrderConfirmModal, setShowClearOrderConfirmModal] = useState(false);
+    const [currentOrderNotes, setCurrentOrderNotes] = useState('');
+
+    const [showReturnItemsModal, setShowReturnItemsModal] = useState(false);
+    const [orderForReturn, setOrderForReturn] = useState(null);
+    const [showAddCustomerModalPOS, setShowAddCustomerModalPOS] = useState(false);
+
 
     useEffect(() => {
         console.log("App useEffect for EmailJS init running.");
@@ -1398,7 +1641,6 @@ function App() {
         }
     }, []);
 
-    // Update adminAccessGranted if admin PIN is changed or removed in settings
     useEffect(() => {
         setAdminAccessGranted(!settings.adminPin);
     }, [settings.adminPin]);
@@ -1406,7 +1648,7 @@ function App() {
 
     const categories = useMemo(() => ['All', ...new Set(products.map(p => p.category.trim()).filter(c => c))].sort(), [products]);
     const filteredProducts = useMemo(() => products.filter(product => (activeCategory === 'All' || product.category === activeCategory) && product.name.toLowerCase().includes(searchTerm.toLowerCase()) && !product.isArchived), [products, activeCategory, searchTerm]);
-    
+
     const subtotal = useMemo(() => orderItems.reduce((sum, item) => sum + (item.itemPriceWithModifiers * item.quantity), 0), [orderItems]);
     const discountAmount = useMemo(() => {
         if (discount.type === 'percentage') return subtotal * ((parseFloat(discount.value) || 0) / 100);
@@ -1414,17 +1656,18 @@ function App() {
         return 0;
     }, [subtotal, discount]);
     const totalAfterDiscount = useMemo(() => subtotal - discountAmount, [subtotal, discountAmount]);
-    
-    // --- MODIFIED: Use taxRate from settings ---
     const tax = useMemo(() => totalAfterDiscount * (settings.taxRate || 0), [totalAfterDiscount, settings.taxRate]);
-    // --- ADDED: Service Charge Calculation ---
+
+    const currentServiceChargeRate = useMemo(() => {
+        const currentOrder = orderHistory.find(o => o.id === selectedOrderId);
+        const isTableOrder = selectedTableId || (currentOrder && currentOrder.tableId);
+        return isTableOrder ? (settings.serviceChargeRate || 0) : 0;
+    }, [selectedTableId, selectedOrderId, orderHistory, settings.serviceChargeRate]);
+
     const serviceChargeAmount = useMemo(() => {
-        if (settings.serviceChargeRate > 0) {
-            return totalAfterDiscount * settings.serviceChargeRate;
-        }
-        return 0;
-    }, [totalAfterDiscount, settings.serviceChargeRate]);
-    // --- MODIFIED: Total includes service charge ---
+        return totalAfterDiscount * currentServiceChargeRate;
+    }, [totalAfterDiscount, currentServiceChargeRate]);
+
     const total = useMemo(() => totalAfterDiscount + tax + serviceChargeAmount, [totalAfterDiscount, tax, serviceChargeAmount]);
 
 
@@ -1453,7 +1696,7 @@ function App() {
         const effectivePaidBySplits = Math.min(totalPaidBySplits, totalAmountToCoverBySplits);
         return totalAmountToCoverBySplits - effectivePaidBySplits;
     }, [totalAmountToCoverBySplits, totalPaidBySplits]);
-    
+
     const overallChangeDue = useMemo(() => {
         let totalCashTendered = 0;
         let totalCashAmountDueInSplits = 0;
@@ -1537,30 +1780,52 @@ function App() {
     };
 
     const removeFromOrder = useCallback((orderItemId) => setOrderItems(prevItems => prevItems.filter(item => item.orderItemId !== orderItemId)), []);
-    const updateQuantity = useCallback((orderItemId, newQuantityStr) => {
-        const newQuantity = parseInt(newQuantityStr, 10);
+
+    const updateQuantity = useCallback((orderItemId, newQuantityOrMultiplier) => {
         setOrderItems(prevItems => prevItems.map(item => {
             if (item.orderItemId === orderItemId) {
-                if (isNaN(newQuantity) || newQuantity < 1) return { ...item, quantity: 1 };
+                let newQuantity;
+                if (typeof newQuantityOrMultiplier === 'string' && newQuantityOrMultiplier.startsWith('x')) {
+                    const multiplier = parseInt(newQuantityOrMultiplier.substring(1), 10);
+                    newQuantity = item.quantity * multiplier;
+                } else {
+                    newQuantity = parseInt(newQuantityOrMultiplier, 10);
+                }
+
+                if (isNaN(newQuantity) || newQuantity < 1) newQuantity = 1;
+
                 const productDetails = products.find(p => p.id === item.productId);
+                if (!productDetails) return item;
+
                 let stockToCheck = productDetails.productType === 'standard' ? productDetails.stock : calculateBundleAvailability(productDetails, products);
-                if (productDetails && newQuantity > stockToCheck) { alert(`Only ${stockToCheck} ${item.name} available. Setting to max.`); return { ...item, quantity: stockToCheck }; }
+                if (newQuantity > stockToCheck) {
+                    alert(`Only ${stockToCheck} ${item.name} available. Setting to max.`);
+                    newQuantity = stockToCheck;
+                }
                 return { ...item, quantity: newQuantity };
-            } return item;
+            }
+            return item;
         }));
     }, [products]);
 
-    const updateInventory = useCallback((itemsToUpdate) => {
+
+    const updateInventory = useCallback((itemsToUpdate, operation = 'subtract') => {
         setProducts(prevProducts => {
             const newProducts = JSON.parse(JSON.stringify(prevProducts));
             itemsToUpdate.forEach(orderItem => {
+                const quantityToChange = operation === 'subtract' ? (orderItem.quantity || orderItem.quantityReturned) : -(orderItem.quantity || orderItem.quantityReturned);
+
                 if (orderItem.productType === 'standard') {
                     const productIndex = newProducts.findIndex(p => p.id === orderItem.productId);
-                    if (productIndex > -1) newProducts[productIndex].stock = Math.max(0, newProducts[productIndex].stock - orderItem.quantity);
+                    if (productIndex > -1) {
+                        newProducts[productIndex].stock = Math.max(0, newProducts[productIndex].stock - quantityToChange);
+                    }
                 } else if (orderItem.productType === 'bundle') {
-                    orderItem.bundleItems.forEach(bundleComponent => {
+                    (orderItem.bundleItems || []).forEach(bundleComponent => {
                         const componentIndex = newProducts.findIndex(p => p.id === bundleComponent.productId);
-                        if (componentIndex > -1) newProducts[componentIndex].stock = Math.max(0, newProducts[componentIndex].stock - (bundleComponent.quantity * orderItem.quantity));
+                        if (componentIndex > -1) {
+                            newProducts[componentIndex].stock = Math.max(0, newProducts[componentIndex].stock - (bundleComponent.quantity * quantityToChange));
+                        }
                     });
                 }
             });
@@ -1568,12 +1833,14 @@ function App() {
         });
     }, [setProducts]);
 
-    const sendToKitchen = useCallback((itemsForKDS, mainDistinctOrderId, customerLabelForKDS) => {
-        if (itemsForKDS.length > 0) {
+    const sendToKitchen = useCallback((itemsForKDS, mainDistinctOrderId, customerLabelForKDS, orderNotesForKDS) => {
+        if (itemsForKDS.length > 0 || (orderNotesForKDS && orderNotesForKDS.trim() !== '')) {
             const newKitchenOrder = {
-                id: generateId(), mainOrderId: mainDistinctOrderId, items: itemsForKDS,
+                id: generateId(), mainOrderId: mainDistinctOrderId,
+                items: itemsForKDS,
                 customer: customerLabelForKDS || 'Walk-in',
-                timestamp: new Date().toISOString(), status: 'Pending'
+                timestamp: new Date().toISOString(), status: 'Pending',
+                notes: orderNotesForKDS || ''
             };
             setKitchenOrders(prev => [newKitchenOrder, ...prev]);
             console.log("Sent to KDS:", newKitchenOrder);
@@ -1613,8 +1880,8 @@ function App() {
             }
             sumOfSplitAmounts += splitAmount;
         }
-        
-        if (Math.abs(sumOfSplitAmounts - totalAmountToCoverBySplits) > 0.001 && totalAmountToCoverBySplits > 0) { // Only check if there's an amount to cover by splits
+
+        if (Math.abs(sumOfSplitAmounts - totalAmountToCoverBySplits) > 0.001 && totalAmountToCoverBySplits > 0) {
              alert(`The sum of payment splits ($${sumOfSplitAmounts.toFixed(2)}) does not match the remaining amount due after loyalty ($${totalAmountToCoverBySplits.toFixed(2)}). Please adjust amounts.`);
              return;
         }
@@ -1643,14 +1910,17 @@ function App() {
                 currentPaymentMethodsUsed.push(paymentDetail);
             }
         });
-        
-        // If only loyalty points are used and cover the whole bill, and no other splits are erroneously added
+
         if (useLoyaltyPoints && actualLoyaltyAmountPaid >= total && paymentSplits.every(s => (parseFloat(s.amount) || 0) === 0)) {
-            // This is fine, currentPaymentMethodsUsed will only contain loyalty
-        } else if (currentPaymentMethodsUsed.length === 0 && total > 0) { // No payment methods for a non-zero total
+        } else if (currentPaymentMethodsUsed.length === 0 && total > 0) {
             alert("Please add a payment method to cover the bill.");
             return;
         }
+
+        const currentOrderForReceipt = orderHistory.find(o => o.id === selectedOrderId);
+        const isTableOrderForReceipt = selectedTableId || (currentOrderForReceipt && currentOrderForReceipt.tableId);
+        const actualServiceChargeForReceipt = isTableOrderForReceipt ? serviceChargeAmount : 0;
+        const actualTotalForReceipt = totalAfterDiscount + tax + actualServiceChargeForReceipt;
 
 
         setReceiptDataForDisplay({
@@ -1660,10 +1930,11 @@ function App() {
             subtotal,
             discountAmount,
             tax,
-            serviceCharge: serviceChargeAmount, // Add service charge to receipt data
-            total,
+            serviceCharge: actualServiceChargeForReceipt,
+            total: actualTotalForReceipt,
             paymentMethodsUsed: currentPaymentMethodsUsed,
             date: new Date().toISOString(),
+            notes: currentOrderNotes,
             cafeName: settings.cafeName,
             cafeAddress: settings.cafeAddress,
             cafePhone: settings.cafePhone,
@@ -1698,17 +1969,18 @@ function App() {
                 itemsForKDS.push({ name: currentItem.displayName, quantity: currentItem.quantity - originalItem.quantity, id: currentItem.productId, options: currentItem.selectedOptions ? currentItem.selectedOptions.map(o => `${o.groupName}: ${o.optionName}`).join(', ') : '' });
             }
         });
-        if (itemsForKDS.length > 0) {
-            sendToKitchen(itemsForKDS, selectedOrderId, customerName || originalOrder.linkedActiveOrderLabel);
+        if (itemsForKDS.length > 0 || currentOrderNotes !== (originalOrder.notes || '')) {
+            sendToKitchen(itemsForKDS, selectedOrderId, customerName || originalOrder.linkedActiveOrderLabel, currentOrderNotes);
         }
         const updatedOrderData = {
             ...originalOrder,
             items: JSON.parse(JSON.stringify(orderItems)),
-            subtotal, tax, discount: discountAmount, serviceCharge: serviceChargeAmount, total, // Include serviceCharge
+            subtotal, tax, discount: discountAmount, serviceCharge: serviceChargeAmount, total,
             customer: customerName || originalOrder.customer,
             customerId: linkedCustomerId || originalOrder.customerId,
             appliedDiscountInfo: JSON.parse(JSON.stringify(discount)),
             linkedActiveOrderLabel: customerName || originalOrder.linkedActiveOrderLabel,
+            notes: currentOrderNotes,
             lastUpdatedAt: new Date().toISOString(),
         };
         const newOrderHistory = [...orderHistory];
@@ -1721,7 +1993,7 @@ function App() {
             return t;
         }));
         alert(`Table order "${updatedOrderData.linkedActiveOrderLabel}" updated. Proceeding to payment.`);
-        setPaymentSplits([{ id: generateId(), method: 'cash', amount: total.toFixed(2), tendered: '0' }]);
+        setPaymentSplits([{ id: generateId(), method: 'cash', amount: total.toFixed(2), tendered: total.toFixed(2) }]);
         setUseLoyaltyPoints(false);
         setLoyaltyAmountToPayInput('');
         setShowPaymentModal(true);
@@ -1742,7 +2014,7 @@ function App() {
             alert("Add items to the To-Go order first.");
             return;
         }
-        setPaymentSplits([{ id: generateId(), method: 'cash', amount: total.toFixed(2), tendered: '0' }]);
+        setPaymentSplits([{ id: generateId(), method: 'cash', amount: total.toFixed(2), tendered: total.toFixed(2) }]);
         setUseLoyaltyPoints(false);
         setLoyaltyAmountToPayInput('');
         setShowPaymentModal(true);
@@ -1756,8 +2028,9 @@ function App() {
             items: JSON.parse(JSON.stringify(orderItems)),
             customer: customerName || (selectedOrderId ? orderHistory.find(o=>o.id === selectedOrderId)?.customer : 'Walk-in'),
             customerId: linkedCustomerId || (selectedOrderId ? orderHistory.find(o=>o.id === selectedOrderId)?.customerId : null),
-            subtotal: subtotal, tax: tax, serviceCharge: serviceChargeAmount, discount: discountAmount, total: total, // Include serviceCharge
+            subtotal: subtotal, tax: tax, serviceCharge: serviceChargeAmount, discount: discountAmount, total: total,
             appliedDiscountInfo: JSON.parse(JSON.stringify(discount)),
+            notes: currentOrderNotes,
             status: 'Suspended', lastUpdatedAt: new Date().toISOString(),
             paymentMethodsUsed: [], paidWithLoyaltyAmount: 0, loyaltyPointsRedeemed: 0,
         };
@@ -1796,8 +2069,8 @@ function App() {
             setOrderHistory(prev => [newSuspendedOrder, ...prev]);
             alert(`New walk-in order "${newSuspendedOrder.linkedActiveOrderLabel}" suspended.`);
         }
-        clearPOSPanel();
-    }, [orderItems, customerName, discount, subtotal, tax, serviceChargeAmount, discountAmount, total, selectedOrderId, orderHistory, customers, tables, setOrderHistory, setTables, clearPOSPanel, linkedCustomerId]);
+        clearPOSPanel(true);
+    }, [orderItems, customerName, discount, subtotal, tax, serviceChargeAmount, discountAmount, total, selectedOrderId, orderHistory, customers, tables, setOrderHistory, setTables, clearPOSPanel, linkedCustomerId, currentOrderNotes]);
 
     const handleResumeOrder = useCallback((orderIdToResume) => {
         const orderToResume = orderHistory.find(o => o.id === orderIdToResume && o.status === 'Suspended');
@@ -1807,6 +2080,7 @@ function App() {
         setOrderItems(JSON.parse(JSON.stringify(orderToResume.items)));
         setCustomerName(orderToResume.customer || orderToResume.linkedActiveOrderLabel);
         setDiscount(JSON.parse(JSON.stringify(orderToResume.appliedDiscountInfo || { type: 'none', value: 0 })));
+        setCurrentOrderNotes(orderToResume.notes || '');
         setSelectedOrderId(orderIdToResume);
         setSelectedTableId(orderToResume.tableId);
         setLinkedCustomerId(orderToResume.customerId);
@@ -1823,7 +2097,7 @@ function App() {
         setCustomerSearchMessage(orderToResume.customerId ? `Customer: ${customers.find(c=>c.id === orderToResume.customerId)?.name || orderToResume.customer}` : '');
         setShowAddCustomerButtonPOS(false);
         setCustomerPhoneSearchInput(customers.find(c=>c.id === orderToResume.customerId)?.phone || '');
-        setPaymentSplits([{ id: generateId(), method: 'cash', amount: orderToResume.total.toFixed(2), tendered: '0' }]);
+        setPaymentSplits([{ id: generateId(), method: 'cash', amount: orderToResume.total.toFixed(2), tendered: orderToResume.total.toFixed(2) }]);
         setUseLoyaltyPoints(false);
         setLoyaltyAmountToPayInput('');
         alert(`Order "${orderToResume.linkedActiveOrderLabel}" resumed.`);
@@ -1838,10 +2112,16 @@ function App() {
         let orderToSave;
         const {
             orderId: tempOrderId, items: receiptItems, subtotal: receiptSubtotal,
-            discountAmount: receiptDiscountAmount, tax: receiptTax, serviceCharge: receiptServiceCharge,
-            total: receiptTotal, customerName: receiptCustomerName,
-            paymentMethodsUsed: receiptPaymentMethodsUsed,
+            discountAmount: receiptDiscountAmount, tax: receiptTax, serviceCharge: receiptServiceChargeToDisplay,
+            total: receiptTotalToDisplay, customerName: receiptCustomerName,
+            paymentMethodsUsed: receiptPaymentMethodsUsed, notes: receiptNotes
         } = receiptDataForDisplay;
+
+        const originalOrderContext = orderHistory.find(o => o.id === tempOrderId);
+        const isTableOrderForSaving = selectedTableId || (originalOrderContext && originalOrderContext.tableId);
+        const actualServiceChargeForSaving = isTableOrderForSaving ? (settings.serviceChargeRate * (receiptSubtotal - receiptDiscountAmount)) : 0;
+        const actualTotalForSaving = (receiptSubtotal - receiptDiscountAmount) + receiptTax + actualServiceChargeForSaving;
+
 
         const finalCustomerId = linkedCustomerId;
         const finalCustomerName = receiptCustomerName;
@@ -1856,14 +2136,19 @@ function App() {
             orderToSave = {
                 ...orderHistory[existingOrderIndex],
                 items: receiptItems,
-                subtotal: receiptSubtotal, tax: receiptTax, serviceCharge: receiptServiceCharge, discount: receiptDiscountAmount, total: receiptTotal,
+                subtotal: receiptSubtotal, tax: receiptTax,
+                serviceCharge: actualServiceChargeForSaving,
+                discount: receiptDiscountAmount,
+                total: actualTotalForSaving,
                 paymentMethodsUsed: receiptPaymentMethodsUsed,
                 paidWithLoyaltyAmount: finalPaidWithLoyalty,
                 loyaltyPointsRedeemed: finalPointsRedeemed,
                 appliedDiscountInfo: JSON.parse(JSON.stringify(discount)),
                 customer: finalCustomerName,
                 customerId: finalCustomerId,
+                notes: receiptNotes,
                 status: 'Paid', paidAt: new Date().toISOString(),
+                type: 'sale',
             };
             const updatedOrderHistory = [...orderHistory];
             updatedOrderHistory[existingOrderIndex] = orderToSave;
@@ -1874,16 +2159,21 @@ function App() {
             orderToSave = {
                 id: orderIdForWalkin, date: originalOrderDate,
                 items: receiptItems,
-                subtotal: receiptSubtotal, tax: receiptTax, serviceCharge: receiptServiceCharge, discount: receiptDiscountAmount, total: receiptTotal,
+                subtotal: receiptSubtotal, tax: receiptTax,
+                serviceCharge: actualServiceChargeForSaving,
+                discount: receiptDiscountAmount,
+                total: actualTotalForSaving,
                 customer: finalCustomerName,
                 customerId: finalCustomerId,
                 paymentMethodsUsed: receiptPaymentMethodsUsed,
                 paidWithLoyaltyAmount: finalPaidWithLoyalty,
                 loyaltyPointsRedeemed: finalPointsRedeemed,
+                notes: receiptNotes,
                 status: 'Paid', tableId: null,
                 appliedDiscountInfo: JSON.parse(JSON.stringify(discount)),
                 linkedActiveOrderLabel: finalCustomerName || `To-Go ${orderIdForWalkin.slice(0,4)}`,
                 paidAt: new Date().toISOString(),
+                type: 'sale',
             };
             if (tempOrderId !== 'NEW') {
                  const existingIndex = orderHistory.findIndex(o => o.id === tempOrderId);
@@ -1894,7 +2184,7 @@ function App() {
                 setOrderHistory(prev => [orderToSave, ...prev]);
             }
             const itemsForKDS = receiptItems.map(item => ({ name: item.displayName, quantity: item.quantity, id: item.productId, options: item.selectedOptions ? item.selectedOptions.map(o => `${o.groupName}: ${o.optionName}`).join(', ') : '' }));
-            sendToKitchen(itemsForKDS, orderIdForWalkin, orderToSave.linkedActiveOrderLabel);
+            sendToKitchen(itemsForKDS, orderIdForWalkin, orderToSave.linkedActiveOrderLabel, orderToSave.notes);
         } else {
             console.error("CompleteOrder called without a valid order context (from receiptData)."); return;
         }
@@ -1922,7 +2212,7 @@ function App() {
         clearPOSPanel();
         setShowPaymentModal(false); setShowReceipt(false);
         setReceiptDataForDisplay(null);
-    }, [receiptDataForDisplay, discount, orderHistory, customers, tables, updateInventory, sendToKitchen, setOrderHistory, setCustomers, setTables, clearPOSPanel, linkedCustomerId, useLoyaltyPoints, actualLoyaltyAmountPaid, pointsNeededForPayment, paymentSplits, selectedTableId, selectedOrderId, serviceChargeAmount]);
+    }, [receiptDataForDisplay, discount, orderHistory, customers, tables, updateInventory, sendToKitchen, setOrderHistory, setCustomers, setTables, clearPOSPanel, linkedCustomerId, useLoyaltyPoints, actualLoyaltyAmountPaid, pointsNeededForPayment, paymentSplits, selectedTableId, selectedOrderId, settings.serviceChargeRate, currentOrderNotes, totalAfterDiscount, tax]);
 
 
     const markOrderComplete = useCallback((kitchenOrderId) => {
@@ -1983,7 +2273,7 @@ function App() {
         setReceiptDataForDisplay(null);
     };
     const handleOptionsModalClose = () => { setShowOptionsModal(false); setProductForOptions(null); };
-    
+
     const getReceiptOrderId = useCallback(() => {
         if (receiptDataForDisplay && receiptDataForDisplay.orderId && receiptDataForDisplay.orderId !== 'NEW') {
             return receiptDataForDisplay.orderId.slice(0,8);
@@ -2026,11 +2316,11 @@ function App() {
         }; reader.readAsText(file);
     };
     const addSupportTicket = (ticketData) => { const newT = { ...ticketData, id: generateId(), timestamp: new Date().toISOString(), status: 'Open' }; setSupportTickets(prev => [newT, ...prev]); };
-    
+
     const addCustomerHandler = (newData) => {
         const newC = { ...newData, id: generateId(), createdAt: new Date().toISOString(), lastVisit: new Date().toISOString() };
         setCustomers(prev => [...prev, newC]);
-        alert(`Customer ${newC.name} added.`);
+        // alert(`Customer ${newC.name} added.`); // Alert moved to the calling function for context
         return newC.id;
     };
     const updateCustomerHandler = (id, updatedData) => { setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updatedData, lastVisit: updatedData.lastVisit || c.lastVisit } : c)); alert("Customer updated."); };
@@ -2067,7 +2357,9 @@ function App() {
             customer: actualLabel, customerId: linkedCustomerId,
             paymentMethod: '', status: 'ActiveTableOrder', tableId: tableId,
             linkedActiveOrderLabel: actualLabel,
+            notes: '',
             paymentMethodsUsed: [], paidWithLoyaltyAmount: 0, loyaltyPointsRedeemed: 0,
+            type: 'sale', returnedItems: [],
         };
         setOrderHistory(prev => [newOrderInHistory, ...prev]);
         setTables(prevTables => prevTables.map(t => {
@@ -2077,6 +2369,7 @@ function App() {
             } return t;
         }));
         setOrderItems([]); setCustomerName(actualLabel); setDiscount({ type: 'none', value: 0 });
+        setCurrentOrderNotes('');
         setSelectedTableId(tableId); setSelectedOrderId(newOrderId);
         setCustomerPhoneSearchInput(''); setCustomerSearchMessage(''); setShowAddCustomerButtonPOS(false);
         setPaymentSplits([{ id: generateId(), method: 'cash', amount: 0, tendered: 0 }]);
@@ -2104,13 +2397,14 @@ function App() {
             setOrderItems(JSON.parse(JSON.stringify(orderToLoad.items)));
             setCustomerName(orderToLoad.linkedActiveOrderLabel || orderToLoad.customer);
             setDiscount(JSON.parse(JSON.stringify(orderToLoad.appliedDiscountInfo || { type: 'none', value: 0 })));
+            setCurrentOrderNotes(orderToLoad.notes || '');
             setSelectedTableId(tableId);
             setSelectedOrderId(distinctOrderId);
             setLinkedCustomerId(orderToLoad.customerId);
             setCustomerPhoneSearchInput(customers.find(c=>c.id === orderToLoad.customerId)?.phone || '');
             setCustomerSearchMessage(orderToLoad.customerId ? `Customer: ${customers.find(c=>c.id === orderToLoad.customerId)?.name || orderToLoad.customer}` : '');
             setShowAddCustomerButtonPOS(false);
-            setPaymentSplits([{ id: generateId(), method: 'cash', amount: orderToLoad.total.toFixed(2), tendered: '0' }]);
+            setPaymentSplits([{ id: generateId(), method: 'cash', amount: orderToLoad.total.toFixed(2), tendered: orderToLoad.total.toFixed(2) }]);
             setUseLoyaltyPoints(false); setLoyaltyAmountToPayInput('');
             setActiveTab('pos');
             setShowTableActionsModal(false);
@@ -2120,7 +2414,7 @@ function App() {
         const orderInPOSIsCurrent = selectedOrderId === distinctOrderId;
         if (orderInPOSIsCurrent) {
             const orderFromHistory = orderHistory.find(o => o.id === distinctOrderId);
-            if (orderFromHistory && (orderItems.length !== orderFromHistory.items.length || total !== orderFromHistory.total) ) {
+            if (orderFromHistory && (orderItems.length !== orderFromHistory.items.length || total !== orderFromHistory.total || currentOrderNotes !== (orderFromHistory.notes || '')) ) {
                  alert("Unsaved changes in POS for this order. Please use 'Update Table Order & Pay' first to save changes before requesting the bill, or clear the POS if you wish to discard changes.");
                  return;
             }
@@ -2149,11 +2443,12 @@ function App() {
         viewDistinctOrderHandler(tableId, distinctOrderId);
         alert(`Order "${orderHistory.find(o=>o.id===distinctOrderId)?.linkedActiveOrderLabel}" reopened.`);
     };
-    
-    const clearPOSPanel = () => {
+
+    const clearPOSPanel = (keepNotes = false) => {
         setOrderItems([]);
         setCustomerName('');
         setDiscount({ type: 'none', value: 0 });
+        if (!keepNotes) setCurrentOrderNotes('');
         setSelectedTableId(null);
         setSelectedOrderId(null);
         setSearchTerm('');
@@ -2166,6 +2461,20 @@ function App() {
         setPaymentSplits([]);
         setReceiptDataForDisplay(null);
     };
+
+    const confirmClearPOS = () => {
+        clearPOSPanel();
+        setShowClearOrderConfirmModal(false);
+    };
+
+    const handleClearPOSButtonClick = () => {
+        if (orderItems.length > 0 || customerName || currentOrderNotes || selectedOrderId || selectedTableId) {
+            setShowClearOrderConfirmModal(true);
+        } else {
+            clearPOSPanel();
+        }
+    };
+
 
     const handleCustomerPhoneSearch = () => {
         if (!customerPhoneSearchInput.trim()) {
@@ -2199,29 +2508,46 @@ function App() {
     };
 
     const handleAddNewCustomerFromPOS = () => {
-        setActiveTab('customers');
-        setCustomerPhoneSearchInput('');
-        setCustomerSearchMessage('');
-        setShowAddCustomerButtonPOS(false);
+        // Instead of switching tabs, show the modal
+        setShowAddCustomerModalPOS(true);
     };
-    const handleCustomerAddedAndSelect = (newlyAddedCustomerId) => {
-        const newCustomer = customers.find(c => c.id === newlyAddedCustomerId);
-        if (newCustomer) {
-            setCustomerName(newCustomer.name);
-            setLinkedCustomerId(newCustomer.id);
-            setCustomerSearchMessage(`Selected: ${newCustomer.name} (Phone: ${newCustomer.phone})`);
-            setShowAddCustomerButtonPOS(false);
-            setCustomerPhoneSearchInput(newCustomer.phone || '');
-            setActiveTab('pos');
+
+    const handleCustomerAddedFromModal = (newCustomerData) => {
+        const newCustomerId = addCustomerHandler(newCustomerData); // Use existing handler to add to main list
+        if (newCustomerId) {
+            const newCustomer = customers.find(c => c.id === newCustomerId); // Get the full new customer object
+            if (newCustomer) {
+                setCustomerName(newCustomer.name);
+                setLinkedCustomerId(newCustomer.id);
+                setCustomerSearchMessage(`Selected: ${newCustomer.name} (Phone: ${newCustomer.phone || 'N/A'})`);
+                setCustomerPhoneSearchInput(newCustomer.phone || ''); // Update search input with new phone
+                setShowAddCustomerButtonPOS(false); // Hide the "Add New" button
+
+                // If an order is active in POS, link this new customer to it
+                if (selectedOrderId) {
+                    setOrderHistory(prevOH => prevOH.map(o => o.id === selectedOrderId ? {...o, customerId: newCustomer.id, customer: newCustomer.name, linkedActiveOrderLabel: newCustomer.name } : o));
+                    if (selectedTableId) {
+                        setTables(prevTables => prevTables.map(t => {
+                            if (t.id === selectedTableId) {
+                                return { ...t, activeOrders: t.activeOrders.map(ao => ao.orderId === selectedOrderId ? { ...ao, displayLabel: newCustomer.name } : ao)};
+                            }
+                            return t;
+                        }));
+                    }
+                }
+                alert(`Customer ${newCustomer.name} added and linked to current order.`);
+            }
         }
+        setShowAddCustomerModalPOS(false); // Close the modal
     };
+
 
     const handleAddPaymentSplit = () => {
         const currentTotalPaidBySplits = paymentSplits.reduce((sum, split) => sum + (parseFloat(split.amount) || 0), 0);
         const remainingForNewSplit = Math.max(0, totalAmountToCoverBySplits - currentTotalPaidBySplits);
         setPaymentSplits(prevSplits => [
             ...prevSplits,
-            { id: generateId(), method: 'cash', amount: remainingForNewSplit.toFixed(2), tendered: remainingForNewSplit.toFixed(2) }
+            { id: generateId(), method: 'card', amount: remainingForNewSplit.toFixed(2), tendered: '' } // Default to card, tendered empty
         ]);
     };
 
@@ -2230,16 +2556,19 @@ function App() {
             prevSplits.map(split => {
                 if (split.id === splitId) {
                     const updatedSplit = { ...split, [field]: value };
-                    if (field === 'amount' && updatedSplit.method === 'cash') {
-                        const newAmount = parseFloat(value) || 0;
-                        if ((parseFloat(updatedSplit.tendered) || 0) < newAmount) {
-                            updatedSplit.tendered = newAmount.toFixed(2);
+                    if (field === 'amount') { // When amount changes
+                        if (updatedSplit.method === 'cash') {
+                             // If tendered is less than new amount, or if tendered is empty, update tendered
+                            if ((parseFloat(updatedSplit.tendered) || 0) < (parseFloat(value) || 0) || updatedSplit.tendered === '') {
+                                updatedSplit.tendered = (parseFloat(value) || 0).toFixed(2);
+                            }
                         }
-                    }
-                     if (field === 'method' && value !== 'cash') {
-                        delete updatedSplit.tendered;
-                    } else if (field === 'method' && value === 'cash' && !updatedSplit.tendered) {
-                        updatedSplit.tendered = updatedSplit.amount;
+                    } else if (field === 'method') { // When payment method changes
+                        if (value === 'cash' && !updatedSplit.tendered) { // If switching to cash and tendered is empty
+                            updatedSplit.tendered = updatedSplit.amount; // Default tendered to amount
+                        } else if (value !== 'cash') {
+                            delete updatedSplit.tendered; // Remove tendered if not cash
+                        }
                     }
                     return updatedSplit;
                 }
@@ -2247,18 +2576,16 @@ function App() {
             })
         );
     };
-    
+
     const handleRemovePaymentSplit = (splitId) => {
         setPaymentSplits(prevSplits => prevSplits.filter(split => split.id !== splitId));
     };
-    
-    // --- ADDED: Handler for updating settings ---
+
     const handleUpdateSettings = (newSettings) => {
-        setSettings(newSettings); // This will also save to localStorage via useLocalStorage
-        setAdminAccessGranted(!newSettings.adminPin); // Re-evaluate admin access if PIN changed
+        setSettings(newSettings);
+        setAdminAccessGranted(!newSettings.adminPin);
     };
 
-    // --- ADDED: Handler for Admin PIN Check ---
     const handleAdminPinSubmit = () => {
         if (enteredAdminPin === settings.adminPin) {
             setAdminAccessGranted(true);
@@ -2275,22 +2602,159 @@ function App() {
     };
 
     const requestAdminAccess = (tabName) => {
-        if (!settings.adminPin) { // No PIN set, grant access
+        if (!settings.adminPin) {
             setAdminAccessGranted(true);
             setActiveTab(tabName);
             return;
         }
-        if (adminAccessGranted) { // Already granted
+        if (adminAccessGranted) {
             setActiveTab(tabName);
-        } else { // PIN set and access not granted, show modal
+        } else {
             setTargetAdminTab(tabName);
             setShowAdminPinModal(true);
         }
     };
-    // --- END ADDED ---
+
+    const handleInitiateReturn = (orderToReturn) => {
+        setOrderForReturn(orderToReturn);
+        setShowReturnItemsModal(true);
+    };
+
+    const handleProcessReturn = (originalOrderId, returnedItemsInThisTransaction, reason, refundAmount) => {
+        console.log("Processing return for order:", originalOrderId);
+        console.log("Returned Items:", returnedItemsInThisTransaction);
+        console.log("Reason:", reason);
+        console.log("Refund Amount:", refundAmount);
+
+        const originalOrderForReturn = orderHistory.find(o => o.id === originalOrderId);
+        if (!originalOrderForReturn) {
+            alert("Original order not found for return processing.");
+            return;
+        }
+
+        const updatedOrderHistory = orderHistory.map(order => {
+            if (order.id === originalOrderId) {
+                const finalAggregatedMap = new Map();
+
+                (order.returnedItems || []).forEach(prevItem => {
+                    const existing = finalAggregatedMap.get(prevItem.orderItemId);
+                    finalAggregatedMap.set(prevItem.orderItemId, {
+                        ...prevItem,
+                        quantity: (existing?.quantity || 0) + prevItem.quantity,
+                    });
+                });
+
+                returnedItemsInThisTransaction.forEach(currentNewReturn => {
+                    const existing = finalAggregatedMap.get(currentNewReturn.orderItemId);
+                    finalAggregatedMap.set(currentNewReturn.orderItemId, {
+                        orderItemId: currentNewReturn.orderItemId,
+                        productId: existing?.productId || currentNewReturn.productId,
+                        name: existing?.name || currentNewReturn.name,
+                        displayName: existing?.displayName || currentNewReturn.displayName,
+                        selectedOptions: existing?.selectedOptions || currentNewReturn.selectedOptions,
+                        itemPriceWithModifiers: existing?.priceAtReturn || currentNewReturn.priceAtReturn,
+                        priceAtReturn: existing?.priceAtReturn || currentNewReturn.priceAtReturn,
+                        quantity: (existing?.quantity || 0) + currentNewReturn.quantityReturned,
+                        productType: existing?.productType || currentNewReturn.productType,
+                        bundleItems: existing?.bundleItems || currentNewReturn.bundleItems,
+                        bundleComponentDetails: existing?.bundleComponentDetails || currentNewReturn.bundleComponentDetails,
+                        image: existing?.image || currentNewReturn.image,
+                        category: existing?.category || currentNewReturn.category,
+                    });
+                });
+
+                const finalAggregatedReturnedItems = Array.from(finalAggregatedMap.values());
+
+                const allOriginalItemsNowReturned = order.items.every(origItem => {
+                    const totalReturnedForThisItem = finalAggregatedReturnedItems
+                        .filter(ri => ri.orderItemId === origItem.orderItemId)
+                        .reduce((sum, ri) => sum + ri.quantity, 0);
+                    return totalReturnedForThisItem >= origItem.quantity;
+                });
+
+                return {
+                    ...order,
+                    returnedItems: finalAggregatedReturnedItems,
+                    status: allOriginalItemsNowReturned ? 'Fully Returned' : 'Partially Returned',
+                    returnReason: order.returnReason ? `${order.returnReason}; ${reason}`.substring(0, 255) : reason.substring(0,255),
+                    returnDate: new Date().toISOString()
+                };
+            }
+            return order;
+        });
+
+        const returnOrderEntry = {
+            id: generateId(),
+            originalOrderId: originalOrderId,
+            date: new Date().toISOString(),
+            items: returnedItemsInThisTransaction.map(ri => ({
+                ...ri,
+                quantity: ri.quantityReturned,
+            })),
+            subtotal: -refundAmount,
+            tax: 0,
+            serviceCharge: 0,
+            discount: 0,
+            total: -refundAmount,
+            customer: originalOrderForReturn.customer,
+            customerId: originalOrderForReturn.customerId,
+            paymentMethodsUsed: [{ method: 'refund_processed', amount: refundAmount }],
+            notes: `Return for Order #${originalOrderId.slice(0,6)}. Reason: ${reason}`.substring(0,255),
+            status: 'Returned',
+            type: 'return',
+            linkedActiveOrderLabel: `Return for #${originalOrderId.slice(0,6)}`
+        };
+
+        setOrderHistory([returnOrderEntry, ...updatedOrderHistory]);
+        updateInventory(returnedItemsInThisTransaction.map(ri => ({...ri, quantity: ri.quantityReturned})), 'add');
+
+        if (originalOrderForReturn.customerId) {
+            const pointsToDeduct = Math.floor(refundAmount);
+            if (pointsToDeduct > 0) {
+                setCustomers(prevCustomers => prevCustomers.map(c => {
+                    if (c.id === originalOrderForReturn.customerId) {
+                        const newLoyaltyPoints = Math.max(0, (c.loyaltyPoints || 0) - pointsToDeduct);
+                        console.log(`Deducting ${pointsToDeduct} points from customer ${c.name}. Old: ${c.loyaltyPoints}, New: ${newLoyaltyPoints}`);
+                        return { ...c, loyaltyPoints: newLoyaltyPoints };
+                    }
+                    return c;
+                }));
+            }
+        }
+
+        alert(`Return processed for order #${originalOrderId.slice(0,6)}. Refund amount: $${refundAmount.toFixed(2)}`);
+        setShowReturnItemsModal(false);
+        setOrderForReturn(null);
+    };
+
+    const handleAddExpense = (newExpenseData) => {
+        const newExpense = {
+            ...newExpenseData,
+            id: generateId(),
+        };
+        setExpenses(prevExpenses => [newExpense, ...prevExpenses]);
+    };
+
+    const handleRemoveExpense = (expenseId) => {
+        if (window.confirm("Are you sure you want to delete this expense record? This action cannot be undone.")) {
+            setExpenses(prevExpenses => prevExpenses.filter(exp => exp.id !== expenseId));
+            alert("Expense record deleted.");
+        }
+    };
 
 
-    const mainTabs = ['pos', 'tables', 'history', 'kitchen', 'customers', 'admin', 'settings', 'dashboard', 'support']; // Added 'settings'
+    const mainTabs = [
+        { name: 'pos', label: 'POS', icon: '🛒' },
+        { name: 'tables', label: 'Tables', icon: '🍽️' },
+        { name: 'history', label: 'History', icon: '📜' },
+        { name: 'kitchen', label: 'Kitchen', icon: '🍳' },
+        { name: 'customers', label: 'Customers', icon: '👥' },
+        { name: 'expenses', label: 'Expenses', icon: '💸' },
+        { name: 'admin', label: 'Admin', icon: '🛠️' },
+        { name: 'settings', label: 'Settings', icon: '⚙️' },
+        { name: 'dashboard', label: 'Dashboard', icon: '📊' },
+        { name: 'support', label: 'Support', icon: '❓' },
+    ];
     const currentOrderLabelInPOS = selectedOrderId ? (orderHistory.find(o=>o.id === selectedOrderId)?.linkedActiveOrderLabel || `Order ${selectedOrderId.slice(0,6)}`) : (customerName || 'New Order');
     const currentTableForPOS = selectedTableId ? tables.find(t=>t.id === selectedTableId)?.name : null;
     const isWalkInOrderActive = !selectedTableId && !selectedOrderId && orderItems.length > 0;
@@ -2299,365 +2763,511 @@ function App() {
 
 
     return (
-        <div>
-            <header>
-                <div className="logo">{settings.cafeName || 'Cafe POS Multi-Order'}</div> {/* Use cafe name from settings */}
-                <div className="header-tabs">
-                    {mainTabs.map(tabName => (
-                        <button 
-                            key={tabName} 
-                            onClick={() => {
-                                if (tabName === 'admin' || tabName === 'settings') {
-                                    requestAdminAccess(tabName);
-                                } else {
-                                    setActiveTab(tabName);
-                                }
-                            }} 
-                            className={`tab ${activeTab === tabName ? 'active' : ''}`} 
-                        >
-                            {tabName.charAt(0).toUpperCase() + tabName.slice(1)}
-                            {tabName === 'history' && ` (${orderHistory.length})`}
-                            {tabName === 'kitchen' && ` (${kitchenOrders.filter(o => o.status === 'Pending').length})`}
-                            {tabName === 'customers' && ` (${customers.length})`}
-                            {tabName === 'tables' && tables.length > 0 && ` (${tables.filter(t => t.status === 'available' && t.activeOrders.length === 0).length}/${tables.length})`}
-                        </button>
-                    ))}
-                </div>
-            </header>
+        <div className="app-layout">
+            <nav className="left-sidebar-tabs">
+                 <div className="sidebar-logo">{settings.cafeName || 'Cafe POS'}</div>
+                {mainTabs.map(tabInfo => (
+                    <button
+                        key={tabInfo.name}
+                        onClick={() => {
+                            if (tabInfo.name === 'admin' || tabInfo.name === 'settings' || tabInfo.name === 'expenses') {
+                                requestAdminAccess(tabInfo.name);
+                            } else {
+                                setActiveTab(tabInfo.name);
+                            }
+                        }}
+                        className={`sidebar-tab ${activeTab === tabInfo.name ? 'active' : ''}`}
+                        title={tabInfo.label}
+                    >
+                        <span className="sidebar-tab-icon">{tabInfo.icon}</span>
+                        <span className="sidebar-tab-label">{tabInfo.label}</span>
+                        {tabInfo.name === 'history' && <span className="tab-count">({orderHistory.length})</span>}
+                        {tabInfo.name === 'kitchen' && <span className="tab-count">({kitchenOrders.filter(o => o.status === 'Pending').length})</span>}
+                        {tabInfo.name === 'customers' && <span className="tab-count">({customers.length})</span>}
+                        {tabInfo.name === 'tables' && tables.length > 0 && <span className="tab-count">({tables.filter(t => t.status === 'available' && t.activeOrders.length === 0).length}/{tables.length})</span>}
+                        {tabInfo.name === 'expenses' && <span className="tab-count">({expenses.length})</span>}
+                    </button>
+                ))}
+            </nav>
 
-            {/* --- ADDED: Admin PIN Modal --- */}
-            {showAdminPinModal && (
-                <div className="modal-overlay" onClick={() => {setShowAdminPinModal(false); setEnteredAdminPin('');}}>
-                    <div className="modal" onClick={(e) => e.stopPropagation()} style={{maxWidth: '350px'}}>
-                        <div className="modal-header">
-                            <h3 className="modal-title">Enter Admin PIN</h3>
-                            <button onClick={() => {setShowAdminPinModal(false); setEnteredAdminPin('');}} className="close-btn">&times;</button>
-                        </div>
-                        <div className="modal-content" style={{display: 'flex', flexDirection: 'column', gap: '15px'}}>
-                            <input 
-                                type="password" 
-                                value={enteredAdminPin} 
-                                onChange={(e) => setEnteredAdminPin(e.target.value)} 
-                                className="form-input" 
-                                placeholder="Admin PIN"
-                                autoFocus
-                            />
-                            <button onClick={handleAdminPinSubmit} className="btn btn-primary">Submit</button>
-                        </div>
-                    </div>
-                </div>
-            )}
-            {/* --- END ADDED --- */}
-
-
-            {activeTab === 'pos' && (
-                <div className="pos-container">
-                    <div> {/* Product selection area */}
-                        <div className="filters-container">
-                            <input type="text" placeholder="Search products..." className="search-input" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-                            <div className="category-tabs">{categories.map(category => (<button key={category} onClick={() => setActiveCategory(category)} className={`tab ${activeCategory === category ? 'active' : ''}`}>{category}</button>))}</div>
-                        </div>
-                        <div className="product-grid">
-                            {filteredProducts.length > 0 ? filteredProducts.map(product => {
-                                const currentBundleStock = product.productType === 'bundle' ? calculateBundleAvailability(product, products) : product.stock;
-                                const stockStatus = product.productType === 'bundle' ? (currentBundleStock > 0 ? 'in-stock' : 'out-of-stock') : getStockStatus(product, products);
-                                const isOutOfStock = stockStatus === 'out-of-stock'; const isUnavailable = product.isTemporarilyUnavailable;
-                                let cardClass = 'product-card'; if (isUnavailable) cardClass += ' temporarily-unavailable'; if (isOutOfStock) cardClass += product.productType === 'bundle' ? ' bundle-out-of-stock' : ' temporarily-unavailable';
-                                return (
-                                    <div key={product.id} className={cardClass} onClick={() => handleProductClick(product)} style={{ opacity: (isOutOfStock || isUnavailable) ? 0.6 : 1, cursor: (isOutOfStock || isUnavailable) ? 'not-allowed' : 'pointer' }} title={isOutOfStock ? `${product.name} is out of stock` : (isUnavailable ? `${product.name} is temporarily unavailable` : `Add ${product.name}. Stock: ${product.productType === 'bundle' ? currentBundleStock + ' can be made' : product.stock}`)} >
-                                        {(stockStatus !== 'in-stock' || isUnavailable) && !product.isArchived && (<div className={`stock-indicator ${isOutOfStock ? 'out-of-stock' : (isUnavailable ? 'status-unavailable' : stockStatus)}`}>{isOutOfStock ? 'Sold Out' : (isUnavailable ? 'Unavailable' : (product.productType === 'standard' ? `Low Stock (${product.stock})` : ''))}</div>)}
-                                        <div className="product-image-container">{product.imageUrl ? <img src={product.imageUrl} alt={product.name} onError={(e) => { e.target.style.display='none'; e.target.nextSibling.style.display='flex'; }} /> : null }<span style={{ fontSize: '48px', display: product.imageUrl ? 'none' : 'flex' }}>{product.image}</span></div>
-                                        <div className="product-info"><div className="product-name">{product.name} {product.productType === 'bundle' ? '(Bundle)' : ''}</div><div className="product-price">${product.price.toFixed(2)}</div>{(product.variationGroups?.length > 0 || product.modifierGroups?.length > 0) && product.productType === 'standard' && (<div style={{fontSize: '0.8em', color: 'var(--info)'}}>Has Options</div>)}</div>
-                                    </div>);
-                            }) : <p className="empty-message">No products match your search.</p>}
-                        </div>
-                    </div>
-                    <div className="order-panel">
-                        <div style={{ marginBottom: '10px', display: 'flex', gap: '10px', alignItems: 'center' }}>
-                            <input
-                                type="tel"
-                                placeholder="Search Customer by Phone"
-                                className="form-input"
-                                value={customerPhoneSearchInput}
-                                onChange={(e) => setCustomerPhoneSearchInput(e.target.value)}
-                                style={{flexGrow: 1}}
-                                disabled={isCurrentOrderSuspended}
-                            />
-                            <button onClick={handleCustomerPhoneSearch} className="btn btn-info btn-sm" style={{padding: '8px 12px'}} disabled={isCurrentOrderSuspended}>Search</button>
-                        </div>
-                        {customerSearchMessage && (
-                            <div style={{ fontSize: '0.9em', color: showAddCustomerButtonPOS ? 'var(--danger)' : 'var(--success)', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span>{customerSearchMessage}</span>
-                                {showAddCustomerButtonPOS && (
-                                    <button onClick={handleAddNewCustomerFromPOS} className="btn btn-success btn-sm" style={{padding: '4px 8px', marginLeft: '10px'}}>
-                                        Add New (+)
-                                    </button>
-                                )}
+            <main className="main-content-area">
+                {showAdminPinModal && (
+                    <div className="modal-overlay" onClick={() => {setShowAdminPinModal(false); setEnteredAdminPin('');}}>
+                        <div className="modal" onClick={(e) => e.stopPropagation()} style={{maxWidth: '350px'}}>
+                            <div className="modal-header">
+                                <h3 className="modal-title">Enter Admin PIN</h3>
+                                <button onClick={() => {setShowAdminPinModal(false); setEnteredAdminPin('');}} className="close-btn">&times;</button>
                             </div>
-                        )}
-
-                         <div style={{ marginBottom: '16px', position: 'relative' }}>
-                            <input type="text" placeholder="Order Label / Customer name" className="form-input" value={customerName} onChange={(e) => { setCustomerName(e.target.value); if(linkedCustomerId) setLinkedCustomerId(null); }} list="customerSuggestionsPOS" disabled={isCurrentOrderSuspended} />
-                            <datalist id="customerSuggestionsPOS">{customers.map(customer => (<option key={customer.id} value={customer.name}>{customer.phone ? `${customer.name} (${customer.phone})` : customer.name}</option>))}</datalist>
-                            {customerName && (<button type="button" className="btn btn-secondary btn-sm" style={{ position: 'absolute', right: '8px', top: '8px', padding: '4px 8px', lineHeight: '1' }} onClick={() => {setCustomerName(''); setLinkedCustomerId(null);}} disabled={isCurrentOrderSuspended} > Clear </button>)}
+                            <div className="modal-content" style={{display: 'flex', flexDirection: 'column', gap: '15px'}}>
+                                <input
+                                    type="password"
+                                    value={enteredAdminPin}
+                                    onChange={(e) => setEnteredAdminPin(e.target.value)}
+                                    className="form-input"
+                                    placeholder="Admin PIN"
+                                    autoFocus
+                                />
+                                <button onClick={handleAdminPinSubmit} className="btn btn-primary">Submit</button>
+                            </div>
                         </div>
-                        <h2 style={{ marginBottom: '10px', fontSize: '18px' }}>
-                            {currentOrderLabelInPOS}
-                            {currentTableForPOS ? ` (Table: ${currentTableForPOS})` : (selectedTableId && !selectedOrderId ? '(Table selected, pick/start order)' : '(Walk-in / To-Go)')}
-                            {isCurrentOrderSuspended && <span style={{color: 'var(--warning)', marginLeft: '10px'}}>(Suspended)</span>}
-                        </h2>
-                        <div className="order-items-container">
-                            {orderItems.length === 0 ? (<p className="empty-message" style={{padding: '10px 0'}}>No items in order</p>) : (orderItems.map(item => (
-                                <div key={item.orderItemId} className="order-item">
-                                    <div className="item-details"><div className="item-name">{item.displayName}</div>{item.selectedOptions?.length > 0 && (<div className="item-options-display">{item.selectedOptions.map(opt => opt.optionName).join(', ')}</div>)}{item.productType === 'bundle' && item.bundleComponentDetails?.length > 0 && (item.bundleComponentDetails.map((detail, idx) => (<div key={idx} className="bundle-component-display">&nbsp;&nbsp;&nbsp;<em>↳ {detail}</em></div>)))}<div className="item-price-info">${item.itemPriceWithModifiers.toFixed(2)} each</div></div>
-                                    <div className="item-controls"><button className="quantity-btn" onClick={() => updateQuantity(item.orderItemId, (item.quantity - 1).toString())} disabled={item.quantity <= 1 || isCurrentOrderSuspended}>-</button><input type="number" className="quantity-input" value={item.quantity} onChange={(e) => updateQuantity(item.orderItemId, e.target.value)} min="1" disabled={isCurrentOrderSuspended}/><button className="quantity-btn" onClick={() => updateQuantity(item.orderItemId, (item.quantity + 1).toString())} disabled={isCurrentOrderSuspended} >+</button><button className="remove-btn" onClick={() => removeFromOrder(item.orderItemId)} title="Remove item" disabled={isCurrentOrderSuspended}>&times;</button></div>
-                                </div>)))}
-                        </div>
-                        <div className="discount-controls">
-                            <select value={discount.type} onChange={(e) => setDiscount({ ...discount, type: e.target.value, value: 0 })} disabled={isCurrentOrderSuspended}><option value="none">No Discount</option><option value="percentage">Percentage %</option><option value="fixed">Fixed Amount $</option></select>
-                            {discount.type !== 'none' && (<input type="number" value={discount.value} onChange={(e) => setDiscount({...discount, value: parseFloat(e.target.value) || 0})} min="0" step={discount.type === 'percentage' ? '1' : '0.01'} max={discount.type === 'percentage' ? '100' : subtotal} placeholder={discount.type === 'percentage' ? '%' : '$'} disabled={isCurrentOrderSuspended} />)}
-                        </div>
-                        <div className="order-totals">
-                            <div className="total-row"><span>Subtotal:</span><span>${subtotal.toFixed(2)}</span></div>
-                            {discountAmount > 0 && (<div className="total-row"><span>Discount:</span><span style={{color: 'var(--danger)'}}>-${discountAmount.toFixed(2)}</span></div>)}
-                            <div className="total-row"><span>Tax ({(settings.taxRate * 100).toFixed(settings.taxRate % 0.01 === 0 ? 0 : 2)}%):</span><span>${tax.toFixed(2)}</span></div>
-                            {settings.serviceChargeRate > 0 && (
-                                <div className="total-row"><span>Service Charge ({(settings.serviceChargeRate * 100).toFixed(settings.serviceChargeRate % 0.01 === 0 ? 0 : 2)}%):</span><span>${serviceChargeAmount.toFixed(2)}</span></div>
-                            )}
-                            <div className="total-row grand-total"><span>Total:</span><span>${total.toFixed(2)}</span></div>
-                        </div>
-
-                        {isTableOrderActiveInPOS && (
-                             <button className="checkout-btn" onClick={handleUpdateAndPayTableOrder} disabled={orderItems.length === 0 || total < 0 || isCurrentOrderSuspended}>
-                                Update Table Order & Pay
-                            </button>
-                        )}
-
-                        {(!selectedTableId && (!selectedOrderId || orderHistory.find(o=>o.id===selectedOrderId)?.status === 'ActiveWalkinResumed')) && (
-                            <button className="checkout-btn" style={{backgroundColor: 'var(--info)'}} onClick={handleCheckoutToGoOrder} disabled={orderItems.length === 0 || total < 0 || isCurrentOrderSuspended}>
-                                Checkout (To-Go)
-                            </button>
-                        )}
-                        
-                        {(orderItems.length > 0 || selectedOrderId) && !isCurrentOrderSuspended && (
-                             <button className="btn btn-secondary" style={{width: '100%', marginTop: '10px', backgroundColor: 'var(--warning)', color: 'var(--dark)'}} onClick={handleSuspendOrder}>
-                                Suspend Order
-                            </button>
-                        )}
-                        {isCurrentOrderSuspended && selectedOrderId && (
-                             <button className="btn btn-primary" style={{width: '100%', marginTop: '10px'}} onClick={() => handleResumeOrder(selectedOrderId)}>
-                                Resume This Order
-                            </button>
-                        )}
-
-
-                        {(selectedOrderId || selectedTableId || orderItems.length > 0 || customerPhoneSearchInput || customerName) && (
-                             <button className="btn btn-secondary" style={{width: '100%', marginTop: '10px'}} onClick={clearPOSPanel}>Clear POS / New Walk-in</button>
-                        )}
                     </div>
-                </div>
-            )}
-            {activeTab === 'tables' && <TableView tables={tables} onOpenTableActions={openTableActions} selectedTableId={selectedTableId} selectedOrderId={selectedOrderId} />}
-            {activeTab === 'history' && <OrderHistoryView orderHistory={orderHistory} markOrderAsDelivered={markOrderAsDelivered} tables={tables} onResumeOrder={handleResumeOrder} />}
-            {activeTab === 'kitchen' && <KitchenDisplayView kitchenOrders={kitchenOrders} markOrderComplete={markOrderComplete} />}
-            {activeTab === 'customers' && <CustomersView customers={customers} addCustomer={addCustomerHandler} updateCustomer={updateCustomerHandler} removeCustomer={removeCustomerHandler} orderHistory={orderHistory} onCustomerAddedFromPOS={handleCustomerAddedAndSelect} />}
-            
-            {/* --- MODIFIED: Admin and Settings Tab Rendering --- */}
-            {activeTab === 'admin' && adminAccessGranted && <AdminView products={products} addProduct={addProductHandler} updateProduct={updateProductHandler} removeProduct={removeProductHandler} archiveProduct={archiveProductHandler} unarchiveProduct={unarchiveProductHandler} categories={categories} onRenameCategory={handleRenameCategory} onExportProducts={handleExportProducts} onImportProducts={handleImportProducts} tables={tables} addTable={addTableHandler} updateTable={updateTableHandler} removeTable={removeTableHandler} />}
-            {activeTab === 'settings' && adminAccessGranted && <SettingsView settings={settings} onUpdateSettings={handleUpdateSettings} />}
-            {(activeTab === 'admin' || activeTab === 'settings') && !adminAccessGranted && settings.adminPin && !showAdminPinModal && (
-                 <div className="admin-container" style={{textAlign: 'center', padding: '50px'}}>
-                    <p>Admin access required. Please enter PIN.</p>
-                    {/* Button to trigger PIN modal again if closed, or auto-show if not yet granted */}
-                    <button onClick={() => requestAdminAccess(activeTab)} className="btn btn-primary">Enter PIN</button>
-                 </div>
-            )}
-            {(activeTab === 'admin' || activeTab === 'settings') && !adminAccessGranted && !settings.adminPin && (
-                 <div className="admin-container" style={{textAlign: 'center', padding: '50px'}}>
-                    <p>To secure Admin and Settings, please set an Admin PIN in Settings.</p>
-                    {/* Allow access to settings to set a PIN if none is set */}
-                    {activeTab === 'settings' ? <SettingsView settings={settings} onUpdateSettings={handleUpdateSettings} /> : <button onClick={() => setActiveTab('settings')} className="btn btn-primary">Go to Settings</button>}
-                 </div>
-            )}
-            {/* --- END MODIFIED --- */}
+                )}
 
-            {activeTab === 'dashboard' && <DashboardView orderHistory={orderHistory} products={products} customers={customers} />}
-            {activeTab === 'support' && <SupportView addSupportTicket={addSupportTicket} supportTickets={supportTickets} emailJsReady={emailJsReady} />}
-
-            {showOptionsModal && productForOptions && (<OptionsSelectionModal product={productForOptions} onClose={handleOptionsModalClose} onAddToCart={addConfiguredItemToOrder} />)}
-
-            {showPaymentModal && (
-                <div className="modal-overlay" onClick={handleModalClose}>
-                    <div className="modal payment-modal-lg" onClick={(e) => e.stopPropagation()}> {/* Added class for potentially larger modal */}
-                        <div className="modal-header">
-                            <div className="modal-title">{showReceipt && receiptDataForDisplay ? "Order Confirmation" : "Process Payment"}</div>
-                            <button className="close-btn" onClick={handleModalClose}>&times;</button>
+                {showClearOrderConfirmModal && (
+                    <div className="modal-overlay" onClick={() => setShowClearOrderConfirmModal(false)}>
+                        <div className="modal confirmation-modal" onClick={(e) => e.stopPropagation()}>
+                            <div className="modal-header">
+                                <h3 className="modal-title">Confirm Clear Order</h3>
+                                <button onClick={() => setShowClearOrderConfirmModal(false)} className="close-btn">&times;</button>
+                            </div>
+                            <div className="modal-content">
+                                <p>Are you sure you want to clear the current order items, customer details, and notes from the POS panel? This action cannot be undone for the current unsaved order.</p>
+                                {selectedOrderId && <p><em>Note: This will not delete the saved order history for order "{currentOrderLabelInPOS}". It only clears the POS panel.</em></p>}
+                            </div>
+                            <div className="modal-actions">
+                                <button className="btn btn-secondary" onClick={() => setShowClearOrderConfirmModal(false)}>Cancel</button>
+                                <button className="btn btn-danger" onClick={confirmClearPOS}>Clear Order</button>
+                            </div>
                         </div>
-                        {!showReceipt ? (
-                            <div className="payment-form">
-                                <div className="form-group">
-                                    <label className="form-label">Total Order Amount</label>
-                                    <input type="text" className="form-input" value={`$${total.toFixed(2)}`} readOnly style={{fontWeight: 'bold', fontSize: '18px'}}/>
+                    </div>
+                )}
+
+                {showAddCustomerModalPOS && (
+                    <AddCustomerModalPOS
+                        onClose={() => setShowAddCustomerModalPOS(false)}
+                        onAddCustomerAndSelect={handleCustomerAddedFromModal}
+                        initialPhone={customerPhoneSearchInput} // Pass the searched phone number
+                    />
+                )}
+
+
+                {activeTab === 'pos' && (
+                    <div className="pos-container">
+                        <div> {/* Product selection area */}
+                            <div className="filters-container">
+                                <input type="text" placeholder="Search products..." className="search-input" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                                <div className="category-tabs">{categories.map(category => (<button key={category} onClick={() => setActiveCategory(category)} className={`tab ${activeCategory === category ? 'active' : ''}`}>{category}</button>))}</div>
+                            </div>
+                            <div className="product-grid">
+                                {filteredProducts.length > 0 ? filteredProducts.map(product => {
+                                    const currentBundleStock = product.productType === 'bundle' ? calculateBundleAvailability(product, products) : product.stock;
+                                    const stockStatus = product.productType === 'bundle' ? (currentBundleStock > 0 ? 'in-stock' : 'out-of-stock') : getStockStatus(product, products);
+                                    const isOutOfStock = stockStatus === 'out-of-stock'; const isUnavailable = product.isTemporarilyUnavailable;
+                                    let cardClass = 'product-card'; if (isUnavailable) cardClass += ' temporarily-unavailable'; if (isOutOfStock) cardClass += product.productType === 'bundle' ? ' bundle-out-of-stock' : ' temporarily-unavailable';
+                                    return (
+                                        <div key={product.id} className={cardClass} onClick={() => handleProductClick(product)} style={{ opacity: (isOutOfStock || isUnavailable) ? 0.6 : 1, cursor: (isOutOfStock || isUnavailable) ? 'not-allowed' : 'pointer' }} title={isOutOfStock ? `${product.name} is out of stock` : (isUnavailable ? `${product.name} is temporarily unavailable` : `Add ${product.name}. Stock: ${product.productType === 'bundle' ? currentBundleStock + ' can be made' : product.stock}`)} >
+                                            {(stockStatus !== 'in-stock' || isUnavailable) && !product.isArchived && (<div className={`stock-indicator ${isOutOfStock ? 'out-of-stock' : (isUnavailable ? 'status-unavailable' : stockStatus)}`}>{isOutOfStock ? 'Sold Out' : (isUnavailable ? 'Unavailable' : (product.productType === 'standard' ? `Low Stock (${product.stock})` : ''))}</div>)}
+                                            <div className="product-image-container">{product.imageUrl ? <img src={product.imageUrl} alt={product.name} onError={(e) => { e.target.style.display='none'; e.target.nextSibling.style.display='flex'; }} /> : null }<span style={{ fontSize: '48px', display: product.imageUrl ? 'none' : 'flex' }}>{product.image}</span></div>
+                                            <div className="product-info"><div className="product-name">{product.name} {product.productType === 'bundle' ? '(Bundle)' : ''}</div><div className="product-price">${product.price.toFixed(2)}</div>{(product.variationGroups?.length > 0 || product.modifierGroups?.length > 0) && product.productType === 'standard' && (<div style={{fontSize: '0.8em', color: 'var(--info)'}}>Has Options</div>)}</div>
+                                        </div>);
+                                }) : <p className="empty-message">No products match your search: "{searchTerm}"</p>}
+                            </div>
+                        </div>
+                        <div className="order-panel">
+                            <div style={{ marginBottom: '10px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                <input
+                                    type="tel"
+                                    placeholder="Search Customer by Phone"
+                                    className="form-input"
+                                    value={customerPhoneSearchInput}
+                                    onChange={(e) => setCustomerPhoneSearchInput(e.target.value)}
+                                    style={{flexGrow: 1}}
+                                    disabled={isCurrentOrderSuspended}
+                                />
+                                <button onClick={handleCustomerPhoneSearch} className="btn btn-info btn-sm" style={{padding: '8px 12px'}} disabled={isCurrentOrderSuspended}>Search</button>
+                            </div>
+                            {customerSearchMessage && (
+                                <div style={{ fontSize: '0.9em', color: showAddCustomerButtonPOS ? 'var(--danger)' : 'var(--success)', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span>{customerSearchMessage}</span>
+                                    {showAddCustomerButtonPOS && (
+                                        <button onClick={handleAddNewCustomerFromPOS} className="btn btn-success btn-sm" style={{padding: '4px 8px', marginLeft: '10px'}}>
+                                            Add New (+)
+                                        </button>
+                                    )}
                                 </div>
-                                
-                                {linkedCustomerId && customers.find(c=>c.id === linkedCustomerId)?.loyaltyPoints > 0 && (
-                                    <div className="form-group loyalty-payment-section">
-                                        <label className="form-label" style={{display: 'flex', alignItems: 'center'}}>
-                                            <input type="checkbox" checked={useLoyaltyPoints} onChange={(e) => {
-                                                setUseLoyaltyPoints(e.target.checked);
-                                                if (!e.target.checked) {
-                                                    setLoyaltyAmountToPayInput('');
-                                                } else {
-                                                    const customer = customers.find(c => c.id === linkedCustomerId);
-                                                    const maxLoyaltyValue = (customer?.loyaltyPoints || 0) * LOYALTY_POINT_VALUE;
-                                                    setLoyaltyAmountToPayInput(Math.min(total, maxLoyaltyValue).toFixed(2));
-                                                }
-                                            }} style={{marginRight: '8px', width: 'auto'}}/>
-                                            Use Loyalty Points? (Available: {customers.find(c=>c.id === linkedCustomerId)?.loyaltyPoints || 0} pts = ${( (customers.find(c=>c.id === linkedCustomerId)?.loyaltyPoints || 0) * LOYALTY_POINT_VALUE).toFixed(2)})
-                                        </label>
-                                        {useLoyaltyPoints && (
-                                            <>
-                                                <label className="form-label" htmlFor="loyaltyAmountInput">Amount to Pay with Points ($):</label>
-                                                <input
-                                                    type="number"
-                                                    id="loyaltyAmountInput"
-                                                    className="form-input"
-                                                    value={loyaltyAmountToPayInput}
-                                                    onChange={(e) => {
-                                                        const val = parseFloat(e.target.value);
+                            )}
+
+                             <div style={{ marginBottom: '10px', position: 'relative' }}>
+                                <input type="text" placeholder="Order Label / Customer name" className="form-input" value={customerName} onChange={(e) => { setCustomerName(e.target.value); if(linkedCustomerId) setLinkedCustomerId(null); }} list="customerSuggestionsPOS" disabled={isCurrentOrderSuspended} />
+                                <datalist id="customerSuggestionsPOS">{customers.map(customer => (<option key={customer.id} value={customer.name}>{customer.phone ? `${customer.name} (${customer.phone})` : customer.name}</option>))}</datalist>
+                                {customerName && (<button type="button" className="btn btn-secondary btn-sm" style={{ position: 'absolute', right: '8px', top: '8px', padding: '4px 8px', lineHeight: '1' }} onClick={() => {setCustomerName(''); setLinkedCustomerId(null);}} disabled={isCurrentOrderSuspended} > Clear </button>)}
+                            </div>
+                            <div className="form-group" style={{marginBottom: '10px'}}>
+                                <label htmlFor="orderNotes" className="form-label" style={{fontSize: '0.9em'}}>Order Notes:</label>
+                                <textarea
+                                    id="orderNotes"
+                                    className="form-textarea order-notes-textarea"
+                                    value={currentOrderNotes}
+                                    onChange={(e) => setCurrentOrderNotes(e.target.value)}
+                                    rows="2"
+                                    placeholder="E.g., Allergy info, special requests..."
+                                    disabled={isCurrentOrderSuspended}
+                                ></textarea>
+                            </div>
+                            <h2 style={{ marginBottom: '10px', fontSize: '18px' }}>
+                                {currentOrderLabelInPOS}
+                                {currentTableForPOS ? ` (Table: ${currentTableForPOS})` : (selectedTableId && !selectedOrderId ? '(Table selected, pick/start order)' : '(Walk-in / To-Go)')}
+                                {isCurrentOrderSuspended && <span style={{color: 'var(--warning)', marginLeft: '10px'}}>(Suspended)</span>}
+                            </h2>
+                            <div className="order-items-container">
+                                {orderItems.length === 0 ? (<p className="empty-message" style={{padding: '10px 0'}}>No items in order</p>) : (orderItems.map(item => (
+                                    <div key={item.orderItemId} className="order-item">
+                                        <div className="item-details"><div className="item-name">{item.displayName}</div>{item.selectedOptions?.length > 0 && (<div className="item-options-display">{item.selectedOptions.map(opt => opt.optionName).join(', ')}</div>)}{item.productType === 'bundle' && item.bundleComponentDetails?.length > 0 && (item.bundleComponentDetails.map((detail, idx) => (<div key={idx} className="bundle-component-display">&nbsp;&nbsp;&nbsp;<em>↳ {detail}</em></div>)))}<div className="item-price-info">${item.itemPriceWithModifiers.toFixed(2)} each</div></div>
+                                        <div className="item-controls">
+                                            <button className="quantity-btn" onClick={() => updateQuantity(item.orderItemId, (item.quantity - 1))} disabled={item.quantity <= 1 || isCurrentOrderSuspended}>-</button>
+                                            <input type="number" className="quantity-input" value={item.quantity} onChange={(e) => updateQuantity(item.orderItemId, e.target.value)} min="1" disabled={isCurrentOrderSuspended}/>
+                                            <button className="quantity-btn" onClick={() => updateQuantity(item.orderItemId, (item.quantity + 1))} disabled={isCurrentOrderSuspended} >+</button>
+                                            <div className="quick-qty-buttons">
+                                                <button className="quick-qty-btn" onClick={() => updateQuantity(item.orderItemId, 'x2')} disabled={isCurrentOrderSuspended}>x2</button>
+                                                <button className="quick-qty-btn" onClick={() => updateQuantity(item.orderItemId, 'x3')} disabled={isCurrentOrderSuspended}>x3</button>
+                                            </div>
+                                            <button className="remove-btn" onClick={() => removeFromOrder(item.orderItemId)} title="Remove item" disabled={isCurrentOrderSuspended}>&times;</button>
+                                        </div>
+                                    </div>)))}
+                            </div>
+                            <div className="discount-controls">
+                                <select value={discount.type} onChange={(e) => setDiscount({ ...discount, type: e.target.value, value: 0 })} disabled={isCurrentOrderSuspended}><option value="none">No Discount</option><option value="percentage">Percentage %</option><option value="fixed">Fixed Amount $</option></select>
+                                {discount.type !== 'none' && (<input type="number" value={discount.value} onChange={(e) => setDiscount({...discount, value: parseFloat(e.target.value) || 0})} min="0" step={discount.type === 'percentage' ? '1' : '0.01'} max={discount.type === 'percentage' ? '100' : subtotal} placeholder={discount.type === 'percentage' ? '%' : '$'} disabled={isCurrentOrderSuspended} />)}
+                            </div>
+                            <div className="order-totals">
+                                <div className="total-row"><span>Subtotal:</span><span>${subtotal.toFixed(2)}</span></div>
+                                {discountAmount > 0 && (<div className="total-row"><span>Discount:</span><span style={{color: 'var(--danger)'}}>-${discountAmount.toFixed(2)}</span></div>)}
+                                <div className="total-row"><span>Tax ({(settings.taxRate * 100).toFixed(settings.taxRate % 0.01 === 0 ? 0 : 2)}%):</span><span>${tax.toFixed(2)}</span></div>
+                                {serviceChargeAmount > 0 && (
+                                    <div className="total-row"><span>Service Charge ({(currentServiceChargeRate * 100).toFixed(currentServiceChargeRate % 0.01 === 0 ? 0 : 2)}%):</span><span>${serviceChargeAmount.toFixed(2)}</span></div>
+                                )}
+                                <div className="total-row grand-total"><span>Total:</span><span>${total.toFixed(2)}</span></div>
+                            </div>
+
+                            {isTableOrderActiveInPOS && (
+                                 <button className="checkout-btn" onClick={handleUpdateAndPayTableOrder} disabled={orderItems.length === 0 || total < 0 || isCurrentOrderSuspended}>
+                                    Update Table Order & Pay
+                                </button>
+                            )}
+
+                            {(!selectedTableId && (!selectedOrderId || orderHistory.find(o=>o.id===selectedOrderId)?.status === 'ActiveWalkinResumed')) && (
+                                <button className="checkout-btn" style={{backgroundColor: 'var(--info)'}} onClick={handleCheckoutToGoOrder} disabled={orderItems.length === 0 || total < 0 || isCurrentOrderSuspended}>
+                                    Checkout (To-Go)
+                                </button>
+                            )}
+
+                            {(orderItems.length > 0 || selectedOrderId) && !isCurrentOrderSuspended && (
+                                 <button className="btn btn-secondary" style={{width: '100%', marginTop: '10px', backgroundColor: 'var(--warning)', color: 'var(--dark)'}} onClick={handleSuspendOrder}>
+                                    Suspend Order
+                                </button>
+                            )}
+                            {isCurrentOrderSuspended && selectedOrderId && (
+                                 <button className="btn btn-primary" style={{width: '100%', marginTop: '10px'}} onClick={() => handleResumeOrder(selectedOrderId)}>
+                                    Resume This Order
+                                </button>
+                            )}
+
+
+                            {(selectedOrderId || selectedTableId || orderItems.length > 0 || customerPhoneSearchInput || customerName || currentOrderNotes) && (
+                                 <button className="btn btn-secondary" style={{width: '100%', marginTop: '10px'}} onClick={handleClearPOSButtonClick}>Clear POS / New Walk-in</button>
+                            )}
+                        </div>
+                    </div>
+                )}
+                {activeTab === 'tables' && <TableView tables={tables} onOpenTableActions={openTableActions} selectedTableId={selectedTableId} selectedOrderId={selectedOrderId} />}
+                {activeTab === 'history' && <OrderHistoryView orderHistory={orderHistory} markOrderAsDelivered={markOrderAsDelivered} tables={tables} onResumeOrder={handleResumeOrder} onInitiateReturn={handleInitiateReturn} />}
+                {activeTab === 'kitchen' && <KitchenDisplayView kitchenOrders={kitchenOrders} markOrderComplete={markOrderComplete} />}
+                {activeTab === 'customers' && <CustomersView customers={customers} addCustomer={addCustomerHandler} updateCustomer={updateCustomerHandler} removeCustomer={removeCustomerHandler} orderHistory={orderHistory} onCustomerAddedFromPOS={handleCustomerAddedFromModal} />}
+                {activeTab === 'expenses' && adminAccessGranted && <ExpensesView expenses={expenses} onAddExpense={handleAddExpense} onRemoveExpense={handleRemoveExpense} />}
+
+
+                {activeTab === 'admin' && adminAccessGranted && <AdminView products={products} addProduct={addProductHandler} updateProduct={updateProductHandler} removeProduct={removeProductHandler} archiveProduct={archiveProductHandler} unarchiveProduct={unarchiveProductHandler} categories={categories} onRenameCategory={handleRenameCategory} onExportProducts={handleExportProducts} onImportProducts={handleImportProducts} tables={tables} addTable={addTableHandler} updateTable={updateTableHandler} removeTable={removeTableHandler} />}
+                {activeTab === 'settings' && adminAccessGranted && <SettingsView settings={settings} onUpdateSettings={handleUpdateSettings} />}
+                {(activeTab === 'admin' || activeTab === 'settings' || activeTab === 'expenses') && !adminAccessGranted && settings.adminPin && !showAdminPinModal && (
+                     <div className="admin-container" style={{textAlign: 'center', padding: '50px'}}>
+                        <p>Admin access required. Please enter PIN.</p>
+                        <button onClick={() => requestAdminAccess(activeTab)} className="btn btn-primary">Enter PIN</button>
+                     </div>
+                )}
+                {(activeTab === 'admin' || activeTab === 'settings' || activeTab === 'expenses') && !adminAccessGranted && !settings.adminPin && (
+                     <div className="admin-container" style={{textAlign: 'center', padding: '50px'}}>
+                        <p>To secure Admin, Settings, and Expenses, please set an Admin PIN in Settings.</p>
+                        {activeTab === 'settings' ? <SettingsView settings={settings} onUpdateSettings={handleUpdateSettings} /> : <button onClick={() => requestAdminAccess('settings')} className="btn btn-primary">Go to Settings</button>}
+                     </div>
+                )}
+
+                {activeTab === 'dashboard' && <DashboardView orderHistory={orderHistory} products={products} customers={customers} />}
+                {activeTab === 'support' && <SupportView addSupportTicket={addSupportTicket} supportTickets={supportTickets} emailJsReady={emailJsReady} />}
+
+                {showOptionsModal && productForOptions && (<OptionsSelectionModal product={productForOptions} onClose={handleOptionsModalClose} onAddToCart={addConfiguredItemToOrder} />)}
+
+                {showPaymentModal && (
+                    <div className="modal-overlay" onClick={handleModalClose}>
+                        <div className="modal payment-modal-lg" onClick={(e) => e.stopPropagation()}>
+                            <div className="modal-header">
+                                <div className="modal-title">{showReceipt && receiptDataForDisplay ? "Order Confirmation" : "Process Payment"}</div>
+                                <button className="close-btn" onClick={handleModalClose}>&times;</button>
+                            </div>
+                            {!showReceipt ? (
+                                <div className="payment-form">
+                                    <div className="form-group">
+                                        <label className="form-label">Total Order Amount</label>
+                                        <input type="text" className="form-input" value={`$${total.toFixed(2)}`} readOnly style={{fontWeight: 'bold', fontSize: '18px'}}/>
+                                    </div>
+
+                                    {linkedCustomerId && customers.find(c=>c.id === linkedCustomerId)?.loyaltyPoints > 0 && (
+                                        <div className="form-group loyalty-payment-section">
+                                            <label className="form-label" style={{display: 'flex', alignItems: 'center'}}>
+                                                <input type="checkbox" checked={useLoyaltyPoints} onChange={(e) => {
+                                                    setUseLoyaltyPoints(e.target.checked);
+                                                    if (!e.target.checked) {
+                                                        setLoyaltyAmountToPayInput('');
+                                                    } else {
                                                         const customer = customers.find(c => c.id === linkedCustomerId);
                                                         const maxLoyaltyValue = (customer?.loyaltyPoints || 0) * LOYALTY_POINT_VALUE;
-                                                        if (isNaN(val) || val < 0) {
-                                                            setLoyaltyAmountToPayInput('0');
-                                                        } else {
-                                                            setLoyaltyAmountToPayInput(Math.min(val, total, maxLoyaltyValue).toFixed(2));
-                                                        }
-                                                    }}
-                                                    step="0.01" min="0"
-                                                    max={Math.min(total, (customers.find(c=>c.id === linkedCustomerId)?.loyaltyPoints || 0) * LOYALTY_POINT_VALUE).toFixed(2)}
-                                                />
-                                                {loyaltyAmountToPayInput && <p style={{fontSize: '0.9em', color: 'var(--primary)'}}>Points to be used: {pointsNeededForPayment}</p>}
-                                            </>
-                                        )}
-                                    </div>
-                                )}
-                                
-                                <hr style={{margin: '15px 0'}}/>
-                                
-                                <div className="form-group">
-                                    <label className="form-label" style={{fontWeight:'bold'}}>Amount to Cover by Other Methods: ${totalAmountToCoverBySplits.toFixed(2)}</label>
-                                </div>
+                                                        setLoyaltyAmountToPayInput(Math.min(total, maxLoyaltyValue).toFixed(2));
+                                                    }
+                                                }} style={{marginRight: '8px', width: 'auto'}}/>
+                                                Use Loyalty Points? (Available: {customers.find(c=>c.id === linkedCustomerId)?.loyaltyPoints || 0} pts = ${( (customers.find(c=>c.id === linkedCustomerId)?.loyaltyPoints || 0) * LOYALTY_POINT_VALUE).toFixed(2)})
+                                            </label>
+                                            {useLoyaltyPoints && (
+                                                <>
+                                                    <label className="form-label" htmlFor="loyaltyAmountInput">Amount to Pay with Points ($):</label>
+                                                    <input
+                                                        type="number"
+                                                        id="loyaltyAmountInput"
+                                                        className="form-input"
+                                                        value={loyaltyAmountToPayInput}
+                                                        onChange={(e) => {
+                                                            const val = parseFloat(e.target.value);
+                                                            const customer = customers.find(c => c.id === linkedCustomerId);
+                                                            const maxLoyaltyValue = (customer?.loyaltyPoints || 0) * LOYALTY_POINT_VALUE;
+                                                            if (isNaN(val) || val < 0) {
+                                                                setLoyaltyAmountToPayInput('0');
+                                                            } else {
+                                                                setLoyaltyAmountToPayInput(Math.min(val, total, maxLoyaltyValue).toFixed(2));
+                                                            }
+                                                        }}
+                                                        step="0.01" min="0"
+                                                        max={Math.min(total, (customers.find(c=>c.id === linkedCustomerId)?.loyaltyPoints || 0) * LOYALTY_POINT_VALUE).toFixed(2)}
+                                                    />
+                                                    {loyaltyAmountToPayInput && <p style={{fontSize: '0.9em', color: 'var(--primary)'}}>Points to be used: {pointsNeededForPayment}</p>}
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
 
-                                {paymentSplits.map((split, index) => (
-                                    <div key={split.id} className="payment-split-item">
-                                        <select value={split.method} onChange={(e) => handleUpdatePaymentSplit(split.id, 'method', e.target.value)} className="form-input">
-                                            <option value="cash">Cash</option>
-                                            <option value="card">Card</option>
-                                            <option value="mobile">Mobile</option>
-                                        </select>
-                                        <input
-                                            type="number"
-                                            placeholder="Amount"
-                                            value={split.amount}
-                                            onChange={(e) => handleUpdatePaymentSplit(split.id, 'amount', e.target.value)}
-                                            className="form-input"
-                                            step="0.01" min="0"
-                                        />
-                                        {split.method === 'cash' && (
+                                    <hr style={{margin: '15px 0'}}/>
+
+                                    <div className="form-group">
+                                        <label className="form-label" style={{fontWeight:'bold'}}>Amount to Cover by Other Methods: ${totalAmountToCoverBySplits.toFixed(2)}</label>
+                                    </div>
+
+                                    {paymentSplits.map((split, index) => (
+                                        <div key={split.id} className="payment-split-item">
+                                            <select value={split.method} onChange={(e) => handleUpdatePaymentSplit(split.id, 'method', e.target.value)} className="form-input">
+                                                <option value="cash">Cash</option>
+                                                <option value="card">Card</option>
+                                                <option value="mobile">Mobile</option>
+                                            </select>
                                             <input
                                                 type="number"
-                                                placeholder="Tendered"
-                                                value={split.tendered || ''}
-                                                onChange={(e) => handleUpdatePaymentSplit(split.id, 'tendered', e.target.value)}
+                                                placeholder="Amount"
+                                                value={split.amount}
+                                                onChange={(e) => handleUpdatePaymentSplit(split.id, 'amount', e.target.value)}
                                                 className="form-input"
-                                                step="0.01" min={parseFloat(split.amount) || 0}
+                                                step="0.01" min="0"
                                             />
-                                        )}
-                                        {paymentSplits.length > 1 && <button onClick={() => handleRemovePaymentSplit(split.id)} className="btn btn-danger btn-sm">&times;</button>}
-                                    </div>
-                                ))}
-                                <button onClick={handleAddPaymentSplit} className="btn btn-secondary btn-sm" style={{alignSelf: 'flex-start', marginTop: '5px'}}
-                                 disabled={Math.abs(overallRemainingDue) < 0.01 && paymentSplits.length > 0 && totalAmountToCoverBySplits > 0}
-                                >
-                                    + Add Payment Method
-                                </button>
-
-                                {paymentSplits.length > 0 && (
-                                    <div style={{marginTop: '10px', fontSize: '0.9em'}}>
-                                        <p>Total Paid by Splits: ${totalPaidBySplits.toFixed(2)}</p>
-                                        <p style={{fontWeight: overallRemainingDue > 0.001 ? 'bold' : 'normal', color: overallRemainingDue > 0.001 ? 'var(--danger)' : 'var(--success)'}}>
-                                            Remaining to Cover by Splits: ${overallRemainingDue.toFixed(2)}
-                                        </p>
-                                        {overallChangeDue > 0 && <p style={{color: 'var(--accent)'}}>Total Change from Cash: ${overallChangeDue.toFixed(2)}</p>}
-                                    </div>
-                                )}
-                                
-                                <div className="modal-actions">
-                                    <button className="btn btn-secondary" onClick={handleModalClose}>Cancel</button>
-                                    <button className="btn btn-primary" onClick={processPayment}
-                                        disabled={
-                                            Math.abs(overallRemainingDue) > 0.001 ||
-                                            (useLoyaltyPoints && (!linkedCustomerId || pointsNeededForPayment > (customers.find(c => c.id === linkedCustomerId)?.loyaltyPoints || 0) )) || 
-                                            paymentSplits.some(s => s.method === 'cash' && (parseFloat(s.tendered) || 0) < (parseFloat(s.amount) || 0))
-                                        }
+                                            {split.method === 'cash' && (
+                                                <input
+                                                    type="number"
+                                                    placeholder="Tendered"
+                                                    value={split.tendered || ''}
+                                                    onChange={(e) => handleUpdatePaymentSplit(split.id, 'tendered', e.target.value)}
+                                                    className="form-input"
+                                                    step="0.01" min={parseFloat(split.amount) || 0}
+                                                />
+                                            )}
+                                            {paymentSplits.length > 1 && <button onClick={() => handleRemovePaymentSplit(split.id)} className="btn btn-danger btn-sm">&times;</button>}
+                                        </div>
+                                    ))}
+                                    <button onClick={handleAddPaymentSplit} className="btn btn-secondary btn-sm" style={{alignSelf: 'flex-start', marginTop: '5px'}}
+                                     disabled={Math.abs(overallRemainingDue) < 0.01 && paymentSplits.length > 0 && totalAmountToCoverBySplits > 0}
                                     >
-                                        Process Payment
+                                        + Add Payment Method
                                     </button>
-                                </div>
-                            </div>
-                        ) : receiptDataForDisplay ? ( 
-                            <div>
-                                <h3 style={{ marginBottom: '16px', textAlign: 'center' }}>Payment Successful!</h3>
-                                <div className="receipt">
-                                    <pre>{`
-${receiptDataForDisplay.showReceiptLogo && receiptDataForDisplay.cafeLogoUrl ? 
-    `<img src="${receiptDataForDisplay.cafeLogoUrl}" alt="Logo" style="max-height: 60px; display: block; margin: 0 auto 10px;" />` : ''}
-${receiptDataForDisplay.cafeName.padStart(30 + receiptDataForDisplay.cafeName.length / 2)}
-${receiptDataForDisplay.cafeAddress.padStart(30 + receiptDataForDisplay.cafeAddress.length / 2)}
-${receiptDataForDisplay.cafePhone.padStart(30 + receiptDataForDisplay.cafePhone.length / 2)}
-${receiptDataForDisplay.cafeWebsite ? receiptDataForDisplay.cafeWebsite.padStart(30 + receiptDataForDisplay.cafeWebsite.length / 2) : ''}
-----------------------------------------
-Date: ${new Date(receiptDataForDisplay.date).toLocaleString()}
-Order: ${receiptDataForDisplay.customerName} ${receiptDataForDisplay.orderId !== 'NEW' ? `(#${receiptDataForDisplay.orderId.slice(0,6)})` : '(New Order)'}
-----------------------------------------
-${receiptDataForDisplay.items.map(item => { let line = `${(item.displayName).padEnd(20)} x${item.quantity.toString().padStart(2)} @ $${item.itemPriceWithModifiers.toFixed(2).padStart(6)}  $${(item.itemPriceWithModifiers * item.quantity).toFixed(2).padStart(7)}`; if (item.productType === 'bundle' && item.bundleComponentDetails?.length > 0) item.bundleComponentDetails.forEach(detail => line += `\n    ↳ ${detail}`); else if (item.selectedOptions?.length > 0) line += `\n  (${item.selectedOptions.map(opt => `${opt.optionName}`).join(', ')})`; return line; }).join('\n')}
-----------------------------------------
-Subtotal:                     $${receiptDataForDisplay.subtotal.toFixed(2).padStart(7)}
-${receiptDataForDisplay.discountAmount > 0 ? `Discount:                     -$${receiptDataForDisplay.discountAmount.toFixed(2).padStart(7)}\n` : ''}Tax (${(settings.taxRate * 100).toFixed(settings.taxRate % 0.01 === 0 ? 0 : 2)}%):                      $${receiptDataForDisplay.tax.toFixed(2).padStart(7)}
-${receiptDataForDisplay.serviceCharge > 0 ? `Service Charge:               $${receiptDataForDisplay.serviceCharge.toFixed(2).padStart(7)}\n` : ''}TOTAL:                        $${receiptDataForDisplay.total.toFixed(2).padStart(7)}
-----------------------------------------
-Payment Details:
-${receiptDataForDisplay.paymentMethodsUsed.map(pm => 
-    `  ${pm.method.charAt(0).toUpperCase() + pm.method.slice(1)}: ${''.padEnd(17 - pm.method.length)} $${pm.amount.toFixed(2).padStart(7)}${pm.method === 'loyalty' ? ` (${pm.points} pts)` : ''}${pm.method === 'cash' && pm.received > pm.amount ? `\n  Cash Received:              $${pm.received.toFixed(2).padStart(7)}\n  Change Given:               $${(pm.received - pm.amount).toFixed(2).padStart(7)}` : ''}`
-).join('\n')}
-----------------------------------------
-${receiptDataForDisplay.receiptHeaderMsg ? `${receiptDataForDisplay.receiptHeaderMsg.padStart(30 + receiptDataForDisplay.receiptHeaderMsg.length / 2)}\n` : ''}
-${receiptDataForDisplay.receiptFooterMsg ? `${receiptDataForDisplay.receiptFooterMsg.padStart(30 + receiptDataForDisplay.receiptFooterMsg.length / 2)}` : ''}
-                                    `}</pre>
-                                </div>
-                                <div className="modal-actions">
-                                    <button className="btn btn-secondary" onClick={() => { setShowReceipt(false); setReceiptDataForDisplay(null); }}>Back to Payment</button>
-                                    <button className="btn btn-primary" onClick={completeOrder}>Complete Order</button>
-                                    <button className="btn btn-primary" onClick={() => { printReceipt(); completeOrder();}}>Print & Complete</button>
-                                </div>
-                            </div>
-                        ) : <p>Loading receipt...</p>}
-                    </div>
-                </div>
-            )}
 
-            {showTableActionsModal && tableForActions && (
-                <TableActionsModal
-                    table={tableForActions}
-                    orderHistory={orderHistory}
-                    onClose={() => setShowTableActionsModal(false)}
-                    onUpdateTableGeneralStatus={updateTableGeneralStatusHandler}
-                    onStartNewDistinctOrder={startNewDistinctOrderHandler}
-                    onViewDistinctOrder={viewDistinctOrderHandler}
-                    onRequestBillForDistinctOrder={requestBillForDistinctOrderHandler}
-                    onReopenDistinctOrder={reopenDistinctOrderHandler}
-                />
-            )}
+                                    {paymentSplits.length > 0 && (
+                                        <div style={{marginTop: '10px', fontSize: '0.9em'}}>
+                                            <p>Total Paid by Splits: ${totalPaidBySplits.toFixed(2)}</p>
+                                            <p style={{fontWeight: overallRemainingDue > 0.001 ? 'bold' : 'normal', color: overallRemainingDue > 0.001 ? 'var(--danger)' : 'var(--success)'}}>
+                                                Remaining to Cover by Splits: ${overallRemainingDue.toFixed(2)}
+                                            </p>
+                                            {overallChangeDue > 0 && <p style={{color: 'var(--accent)'}}>Total Change from Cash: ${overallChangeDue.toFixed(2)}</p>}
+                                        </div>
+                                    )}
+
+                                    <div className="modal-actions">
+                                        <button className="btn btn-secondary" onClick={handleModalClose}>Cancel</button>
+                                        <button className="btn btn-primary" onClick={processPayment}
+                                            disabled={
+                                                Math.abs(overallRemainingDue) > 0.001 ||
+                                                (useLoyaltyPoints && (!linkedCustomerId || pointsNeededForPayment > (customers.find(c => c.id === linkedCustomerId)?.loyaltyPoints || 0) )) ||
+                                                paymentSplits.some(s => s.method === 'cash' && (parseFloat(s.tendered) || 0) < (parseFloat(s.amount) || 0))
+                                            }
+                                        >
+                                            Process Payment
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : receiptDataForDisplay ? (
+                                <div className="receipt-display-area">
+                                    <div className="receipt-header">
+                                        {receiptDataForDisplay.showReceiptLogo && receiptDataForDisplay.cafeLogoUrl && (
+                                            <div className="receipt-logo">
+                                                <img src={receiptDataForDisplay.cafeLogoUrl} alt="Cafe Logo" />
+                                            </div>
+                                        )}
+                                        <div className="receipt-cafe-name">{receiptDataForDisplay.cafeName}</div>
+                                        <div className="receipt-cafe-details">
+                                            {receiptDataForDisplay.cafeAddress && <p>{receiptDataForDisplay.cafeAddress}</p>}
+                                            {receiptDataForDisplay.cafePhone && <p>Phone: {receiptDataForDisplay.cafePhone}</p>}
+                                            {receiptDataForDisplay.cafeWebsite && <p>{receiptDataForDisplay.cafeWebsite}</p>}
+                                        </div>
+                                    </div>
+
+                                    <div className="receipt-order-info">
+                                        <p><strong>Date:</strong> <span>{new Date(receiptDataForDisplay.date).toLocaleString()}</span></p>
+                                        <p><strong>Order:</strong> <span>{receiptDataForDisplay.customerName} {receiptDataForDisplay.orderId !== 'NEW' ? `(#${receiptDataForDisplay.orderId.slice(0,6)})` : '(New Order)'}</span></p>
+                                    </div>
+
+                                    <div className="receipt-items-header">
+                                        <div className="item-name-col">Item</div>
+                                        <div className="item-qty-col">Qty</div>
+                                        <div className="item-price-col">Price</div>
+                                        <div className="item-total-col">Total</div>
+                                    </div>
+                                    <div className="receipt-items">
+                                        {receiptDataForDisplay.items.map((item, index) => (
+                                            <React.Fragment key={item.orderItemId || index}>
+                                                <div className="receipt-item">
+                                                    <span className="item-name-col">{item.displayName}</span>
+                                                    <span className="item-qty-col">{item.quantity}</span>
+                                                    <span className="item-price-col">${item.itemPriceWithModifiers.toFixed(2)}</span>
+                                                    <span className="item-total-col">${(item.itemPriceWithModifiers * item.quantity).toFixed(2)}</span>
+                                                </div>
+                                                {item.productType === 'bundle' && item.bundleComponentDetails?.length > 0 &&
+                                                    item.bundleComponentDetails.map((detail, idx) => (
+                                                        <div key={`bc-${index}-${idx}`} className="bundle-component-line">↳ {detail}</div>
+                                                    ))
+                                                }
+                                                {item.productType !== 'bundle' && item.selectedOptions?.length > 0 && (
+                                                    <div className="item-options-line">({item.selectedOptions.map(opt => opt.optionName).join(', ')})</div>
+                                                )}
+                                            </React.Fragment>
+                                        ))}
+                                    </div>
+                                    {receiptDataForDisplay.notes && (
+                                        <div className="receipt-notes-section">
+                                            <h4>Order Notes:</h4>
+                                            <p>{receiptDataForDisplay.notes}</p>
+                                        </div>
+                                    )}
+
+                                    <div className="receipt-totals">
+                                        <div className="total-line">
+                                            <span>Subtotal:</span>
+                                            <span>${receiptDataForDisplay.subtotal.toFixed(2)}</span>
+                                        </div>
+                                        {receiptDataForDisplay.discountAmount > 0 && (
+                                            <div className="total-line">
+                                                <span>Discount:</span>
+                                                <span>-${receiptDataForDisplay.discountAmount.toFixed(2)}</span>
+                                            </div>
+                                        )}
+                                        <div className="total-line">
+                                            <span>Tax ({(settings.taxRate * 100).toFixed(settings.taxRate % 1 === 0 ? 0 : 2)}%):</span>
+                                            <span>${receiptDataForDisplay.tax.toFixed(2)}</span>
+                                        </div>
+                                        {receiptDataForDisplay.serviceCharge > 0 && (
+                                            <div className="total-line">
+                                                <span>Service Charge ({(settings.serviceChargeRate * 100).toFixed(settings.serviceChargeRate % 1 === 0 ? 0 : 2)}%):</span>
+                                                <span>${receiptDataForDisplay.serviceCharge.toFixed(2)}</span>
+                                            </div>
+                                        )}
+                                        <div className="total-line grand-total">
+                                            <span>TOTAL:</span>
+                                            <span>${receiptDataForDisplay.total.toFixed(2)}</span>
+                                        </div>
+                                    </div>
+
+                                    {receiptDataForDisplay.paymentMethodsUsed && receiptDataForDisplay.paymentMethodsUsed.length > 0 && (
+                                        <div className="receipt-payment-details">
+                                            <h4>Payment Details:</h4>
+                                            {receiptDataForDisplay.paymentMethodsUsed.map((pm, index) => (
+                                                <div key={index} className="payment-line">
+                                                    <span>{pm.method.charAt(0).toUpperCase() + pm.method.slice(1)}:</span>
+                                                    <span>
+                                                        ${pm.amount.toFixed(2)}
+                                                        {pm.method === 'loyalty' && pm.points ? ` (${pm.points} pts)` : ''}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                            {(() => {
+                                                const cashPayments = receiptDataForDisplay.paymentMethodsUsed.filter(pm => pm.method === 'cash');
+                                                const totalCashReceived = cashPayments.reduce((sum, pm) => sum + (pm.received || 0), 0);
+                                                const totalCashAmountDue = cashPayments.reduce((sum, pm) => sum + pm.amount, 0);
+                                                const change = totalCashReceived - totalCashAmountDue;
+                                                if (change > 0.001) {
+                                                    return (
+                                                        <>
+                                                        <div className="payment-line" style={{marginTop: '5px', borderTop: '1px dotted var(--light-grey)', paddingTop: '5px'}}>
+                                                            <span>Total Cash Received:</span>
+                                                            <span>${totalCashReceived.toFixed(2)}</span>
+                                                        </div>
+                                                        <div className="payment-line">
+                                                            <span>Change Given:</span>
+                                                            <span>${change.toFixed(2)}</span>
+                                                        </div>
+                                                        </>
+                                                    );
+                                                }
+                                                return null;
+                                            })()}
+                                        </div>
+                                    )}
+
+                                    <div className="receipt-footer">
+                                        {receiptDataForDisplay.receiptHeaderMsg && <p>{receiptDataForDisplay.receiptHeaderMsg}</p>}
+                                        {receiptDataForDisplay.receiptFooterMsg && <p>{receiptDataForDisplay.receiptFooterMsg}</p>}
+                                    </div>
+                                     <div className="modal-actions" style={{marginTop: '20px', borderTop: '1px solid var(--light-grey)', paddingTop: '15px'}}>
+                                        <button className="btn btn-secondary" onClick={() => { setShowReceipt(false); /* Keep receiptDataForDisplay for re-payment if needed */ }}>Back to Payment</button>
+                                        <button className="btn btn-primary" onClick={completeOrder}>Complete Order</button>
+                                        <button className="btn btn-primary" onClick={() => { printReceipt(); completeOrder();}}>Print & Complete</button>
+                                    </div>
+                                </div>
+                            ) : <p>Loading receipt...</p>}
+                        </div>
+                    </div>
+                )}
+
+                {showTableActionsModal && tableForActions && (
+                    <TableActionsModal
+                        table={tableForActions}
+                        orderHistory={orderHistory}
+                        onClose={() => setShowTableActionsModal(false)}
+                        onUpdateTableGeneralStatus={updateTableGeneralStatusHandler}
+                        onStartNewDistinctOrder={startNewDistinctOrderHandler}
+                        onViewDistinctOrder={viewDistinctOrderHandler}
+                        onRequestBillForDistinctOrder={requestBillForDistinctOrderHandler}
+                        onReopenDistinctOrder={reopenDistinctOrderHandler}
+                    />
+                )}
+
+                {showReturnItemsModal && orderForReturn && (
+                    <ReturnItemsModal
+                        order={orderForReturn}
+                        onClose={() => { setShowReturnItemsModal(false); setOrderForReturn(null); }}
+                        onProcessReturn={handleProcessReturn}
+                    />
+                )}
+            </main>
         </div>
     );
 }
@@ -2665,5 +3275,3 @@ ${receiptDataForDisplay.receiptFooterMsg ? `${receiptDataForDisplay.receiptFoote
 console.log("React script end, rendering App - Multi-Order Version with Suspend/Resume & Settings");
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
-
-
