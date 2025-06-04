@@ -3,9 +3,6 @@
 console.log("React script start - Multi-Order Table Version with Suspend/Resume & Settings");
 
 const { useState, useEffect, useMemo, useCallback } = React;
-// Removed Recharts components:
-// const { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, Sector, AreaChart, Area } = Recharts;
-
 
 // Helper Functions and Initial Data
 const initialProductsData = [
@@ -743,40 +740,101 @@ function AdminView({
     );
 }
 
-// --- DashboardView (Simplified without charts for now) ---
-function DashboardView({ orderHistory, products, customers, expenses }) {
+function DashboardView({ orderHistory, products, customers }) {
     const activeProducts = useMemo(() => products.filter(p => !p.isArchived), [products]);
-
-    // For simplicity, these calculations will consider all history for now
-    const totalSalesAllTime = useMemo(() => orderHistory.filter(o => o.type !== 'return').reduce((sum, order) => sum + order.total, 0), [orderHistory]);
-    const totalOrdersAllTime = useMemo(() => orderHistory.filter(o => o.type !== 'return').length, [orderHistory]);
-    const averageOrderValueAllTime = totalOrdersAllTime > 0 ? totalSalesAllTime / totalOrdersAllTime : 0;
-    const totalItemsSoldAllTime = useMemo(() => orderHistory.filter(o => o.type !== 'return').reduce((sum, order) => sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0),0), [orderHistory]);
-    const averageItemsPerOrderAllTime = totalOrdersAllTime > 0 ? totalItemsSoldAllTime / totalOrdersAllTime : 0;
-    const totalExpensesAllTime = useMemo(() => expenses.reduce((sum, expense) => sum + expense.amount, 0), [expenses]);
-    const netProfitAllTime = useMemo(() => totalSalesAllTime - totalExpensesAllTime, [totalSalesAllTime, totalExpensesAllTime]);
-    const numberOfReturnsAllTime = useMemo(() => orderHistory.filter(order => order.type === 'return').length, [orderHistory]);
+    const totalSales = useMemo(() => orderHistory.reduce((sum, order) => sum + order.total, 0), [orderHistory]);
+    const totalOrders = orderHistory.length;
+    const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
+    const itemSalesByQuantity = useMemo(() => {
+        const sales = {};
+        orderHistory.forEach(order => { order.items.forEach(item => { sales[item.displayName] = (sales[item.displayName] || 0) + item.quantity; }); });
+        return Object.entries(sales).sort(([,a],[,b]) => b-a);
+    }, [orderHistory]);
+    const itemSalesByRevenue = useMemo(() => {
+        const revenues = {};
+        orderHistory.forEach(order => { order.items.forEach(item => { revenues[item.displayName] = (revenues[item.displayName] || 0) + (item.itemPriceWithModifiers * item.quantity); }); });
+        return Object.entries(revenues).sort(([,a],[,b]) => b-a);
+    }, [orderHistory]);
+    const salesByCategory = useMemo(() => {
+        const categorySales = {};
+        orderHistory.forEach(order => {
+            order.items.forEach(item => {
+                const productDetails = products.find(p => p.id === item.productId);
+                const category = productDetails ? productDetails.category : 'Uncategorized (Product Removed)';
+                categorySales[category] = (categorySales[category] || 0) + (item.itemPriceWithModifiers * item.quantity);
+            });
+        });
+        return Object.entries(categorySales).sort(([,a],[,b]) => b-a);
+    }, [orderHistory, products]);
+     const componentSalesFromBundles = useMemo(() => {
+        const componentSales = {};
+        orderHistory.forEach(order => {
+            order.items.forEach(item => {
+                if (item.productType === 'bundle' && item.bundleItems) {
+                    item.bundleItems.forEach(bundleComp => {
+                        const compProduct = products.find(p => p.id === bundleComp.productId);
+                        if (compProduct) componentSales[compProduct.name] = (componentSales[compProduct.name] || 0) + (bundleComp.quantity * item.quantity);
+                    });
+                }
+            });
+        });
+        return Object.entries(componentSales).sort(([,a],[,b]) => b-a);
+    }, [orderHistory, products]);
+    const paymentMethodStats = useMemo(() => {
+        const stats = {};
+        orderHistory.forEach(order => {
+            if (order.paymentMethodsUsed && Array.isArray(order.paymentMethodsUsed)) {
+                order.paymentMethodsUsed.forEach(pm => {
+                    const method = pm.method || 'Other';
+                    if (!stats[method]) stats[method] = { count: 0, total: 0 };
+                    stats[method].count += 1;
+                    stats[method].total += pm.amount;
+                });
+            } else if (order.paymentMethod) {
+                 const method = order.paymentMethod || 'Other';
+                 if (!stats[method]) stats[method] = { count: 0, total: 0 };
+                 stats[method].count += 1;
+                 stats[method].total += order.total;
+            }
+        });
+        return stats;
+    }, [orderHistory]);
+    const totalDiscountsGiven = useMemo(() => orderHistory.reduce((sum, order) => sum + (order.discount || 0), 0), [orderHistory]);
+    const lowStockItems = useMemo(() => activeProducts.filter(p => p.productType === 'standard' && !p.isTemporarilyUnavailable && p.stock > 0 && p.stock <= p.minStock), [activeProducts]);
+    const totalUniqueCustomers = useMemo(() => customers.length, [customers]);
+    const topCustomersBySpending = useMemo(() => {
+        const customerSpending = {};
+        orderHistory.forEach(order => {
+            if (order.customerId) customerSpending[order.customerId] = (customerSpending[order.customerId] || 0) + order.total;
+            else if (order.customer && order.customer !== 'Walk-in') customerSpending[order.customer] = (customerSpending[order.customer] || 0) + order.total;
+        });
+        return Object.entries(customerSpending)
+            .map(([idOrName, totalSpent]) => ({ name: customers.find(c => c.id === idOrName || c.name === idOrName)?.name || idOrName, totalSpent }))
+            .sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 5);
+    }, [orderHistory, customers]);
+    const topCustomersByLoyalty = useMemo(() => [...customers].sort((a, b) => (b.loyaltyPoints || 0) - (a.loyaltyPoints || 0)).slice(0, 5), [customers]);
 
     return (
         <div className="dashboard-container">
-            <h2>Dashboard (Overall Stats)</h2>
-            <p style={{textAlign: 'center', color: 'var(--grey)', marginBottom: '20px'}}>
-                Displaying overall statistics. Date filtering and charts will be added in a future update.
-            </p>
+            <h2>Dashboard</h2>
             <div className="dashboard-grid">
-                <div className="dashboard-card"><h3>Total Sales</h3><p className="metric-value">${totalSalesAllTime.toFixed(2)}</p></div>
-                <div className="dashboard-card"><h3>Total Orders</h3><p className="metric-value">{totalOrdersAllTime}</p></div>
-                <div className="dashboard-card"><h3>Avg. Order Value</h3><p className="metric-value">${averageOrderValueAllTime.toFixed(2)}</p></div>
-                <div className="dashboard-card"><h3>Total Items Sold</h3><p className="metric-value">{totalItemsSoldAllTime}</p></div>
-                <div className="dashboard-card"><h3>Avg. Items / Order</h3><p className="metric-value">{averageItemsPerOrderAllTime.toFixed(2)}</p></div>
-                <div className="dashboard-card"><h3>Total Expenses</h3><p className="metric-value" style={{color: 'var(--danger)'}}>${totalExpensesAllTime.toFixed(2)}</p></div>
-                <div className="dashboard-card"><h3>Net Profit</h3><p className="metric-value" style={{color: netProfitAllTime >= 0 ? 'var(--success)' : 'var(--danger)'}}>${netProfitAllTime.toFixed(2)}</p></div>
-                <div className="dashboard-card"><h3>Total Returns</h3><p className="metric-value">{numberOfReturnsAllTime}</p></div>
+                <div className="dashboard-card"><h3>Total Sales</h3><p className="metric-value">${totalSales.toFixed(2)}</p></div>
+                <div className="dashboard-card"><h3>Total Orders</h3><p className="metric-value">{totalOrders}</p></div>
+                <div className="dashboard-card"><h3>Avg. Order Value</h3><p className="metric-value">${averageOrderValue.toFixed(2)}</p></div>
+                <div className="dashboard-card"><h3>Total Discounts</h3><p className="metric-value">${totalDiscountsGiven.toFixed(2)}</p></div>
+                <div className="dashboard-card"><h3>Total Customers</h3><p className="metric-value">{totalUniqueCustomers}</p></div>
+                <div className="dashboard-card"><h3>Sales by Category</h3>{salesByCategory.length > 0 ? (<ul>{salesByCategory.map(([category, amount]) => <li key={category}><span>{category}</span> <span>${amount.toFixed(2)}</span></li>)}</ul>) : <p className="empty-message" style={{fontSize: '14px', padding: '0'}}>No sales data.</p>}</div>
+                <div className="dashboard-card"><h3>Payment Methods</h3>{Object.keys(paymentMethodStats).length > 0 ? (<ul>{Object.entries(paymentMethodStats).map(([method, data]) => <li key={method}><span>{method.charAt(0).toUpperCase() + method.slice(1)}</span> <span>{data.count} uses (${data.total.toFixed(2)})</span></li>)}</ul>) : <p className="empty-message" style={{fontSize: '14px', padding: '0'}}>No sales data.</p>}</div>
+                <div className="dashboard-card"><h3>Top Items by Quantity (Top 5)</h3>{itemSalesByQuantity.length > 0 ? (<ul>{itemSalesByQuantity.slice(0,5).map(([name, qty]) => <li key={name}><span>{name}</span> <span>{qty} sold</span></li>)}</ul>) : <p className="empty-message" style={{fontSize: '14px', padding: '0'}}>No sales data.</p>}</div>
+                <div className="dashboard-card"><h3>Top Items by Revenue (Top 5)</h3>{itemSalesByRevenue.length > 0 ? (<ul>{itemSalesByRevenue.slice(0,5).map(([name, revenue]) => <li key={name}><span>{name}</span> <span>${revenue.toFixed(2)}</span></li>)}</ul>) : <p className="empty-message" style={{fontSize: '14px', padding: '0'}}>No sales data.</p>}</div>
+                <div className="dashboard-card"><h3>Low Stock Items ({lowStockItems.length})</h3>{lowStockItems.length > 0 ? (<ul style={{maxHeight: '150px', overflowY: 'auto'}}>{lowStockItems.map(item => <li key={item.id} style={{color: item.stock === 0 ? 'var(--danger)' : (item.stock < item.minStock / 2 ? 'var(--danger)' : 'var(--warning)')}}><span>{item.name}</span> <span>{item.stock} left (min {item.minStock})</span></li>)}</ul>) : <p className="empty-message" style={{fontSize: '14px', padding: '0'}}>All items well stocked.</p>}</div>
+                <div className="dashboard-card"><h3>Top Components Sold in Bundles (Top 5)</h3>{componentSalesFromBundles.length > 0 ? (<ul>{componentSalesFromBundles.slice(0,5).map(([name, qty]) => <li key={name}><span>{name}</span> <span>{qty} sold in bundles</span></li>)}</ul>) : <p className="empty-message" style={{fontSize: '14px', padding: '0'}}>No bundle component sales.</p>}</div>
+                <div className="dashboard-card"><h3>Top Customers by Spending (Top 5)</h3>{topCustomersBySpending.length > 0 ? (<ul>{topCustomersBySpending.map(cust => <li key={cust.name}><span>{cust.name}</span> <span>${cust.totalSpent.toFixed(2)}</span></li>)}</ul>) : <p className="empty-message" style={{fontSize: '14px', padding: '0'}}>No customer spending data.</p>}</div>
+                <div className="dashboard-card"><h3>Top Customers by Loyalty (Top 5)</h3>{topCustomersByLoyalty.length > 0 ? (<ul>{topCustomersByLoyalty.map(cust => <li key={cust.id}><span>{cust.name}</span> <span>{cust.loyaltyPoints || 0} pts</span></li>)}</ul>) : <p className="empty-message" style={{fontSize: '14px', padding: '0'}}>No customer loyalty data.</p>}</div>
             </div>
         </div>
     );
 }
-
 
 function OrderHistoryView({ orderHistory, markOrderAsDelivered, tables, onResumeOrder, onInitiateReturn }) {
      return (
@@ -853,7 +911,7 @@ function OrderHistoryView({ orderHistory, markOrderAsDelivered, tables, onResume
                             {(order.status === 'ReadyForDeliveryPickup' || order.status === 'ActiveTableOrder' || order.status === 'BillRequestedTableOrder') && (
                                 <button className="btn btn-mark-delivered" onClick={() => markOrderAsDelivered(order.id)} style={{marginTop: '10px'}}> Mark as Delivered/Collected </button>
                             )}
-                            {isReturnable && order.type === 'sale' && (!order.returnedItems || order.returnedItems.length < order.items.length) && (
+                            {isReturnable && order.type === 'sale' && (!order.returnedItems || order.returnedItems.length < order.items.length) && ( // Show if not all items returned
                                 <button className="btn btn-warning" onClick={() => onInitiateReturn(order)} style={{marginTop: '10px'}}>Return Items</button>
                             )}
                         </div>
@@ -977,10 +1035,10 @@ function CustomersView({ customers, addCustomer, updateCustomer, removeCustomer,
         if (isEditing) {
             updateCustomer(customerForm.id, customerData);
         } else {
-            newCustomerId = addCustomer(customerData);
+            newCustomerId = addCustomer(customerData); // addCustomer should return the new customer's ID
         }
         resetForm();
-        if (onCustomerAddedFromPOS && newCustomerId) {
+        if (onCustomerAddedFromPOS && newCustomerId) { // If callback exists (meaning we came from POS)
             onCustomerAddedFromPOS(newCustomerId);
         }
     };
@@ -1029,6 +1087,7 @@ function CustomersView({ customers, addCustomer, updateCustomer, removeCustomer,
     );
 }
 
+// --- AddCustomerModalPOS Component ---
 function AddCustomerModalPOS({ onClose, onAddCustomerAndSelect, initialPhone = '' }) {
     const initialFormState = { name: '', email: '', phone: initialPhone, notes: '' };
     const [customerForm, setCustomerForm] = useState(initialFormState);
@@ -1046,12 +1105,16 @@ function AddCustomerModalPOS({ onClose, onAddCustomerAndSelect, initialPhone = '
             return;
         }
         setIsSubmitting(true);
+        // Here, we'd typically call a function passed via props to add the customer
+        // This function should handle adding to the main customers list and then selecting
         onAddCustomerAndSelect({
             name: customerForm.name.trim(),
             email: customerForm.email.trim(),
             phone: customerForm.phone.trim(),
             notes: customerForm.notes.trim()
         });
+        // No need to reset form here as the modal will close
+        // setIsSubmitting(false); // This would be handled by the parent closing the modal
     };
 
     return (
@@ -1417,6 +1480,7 @@ function SettingsView({ settings, onUpdateSettings }) {
     );
 }
 
+// --- ExpensesView Component ---
 function ExpensesView({ expenses, onAddExpense, onRemoveExpense }) {
     const initialExpenseForm = { description: '', amount: '', date: new Date().toISOString().split('T')[0], category: '' };
     const [expenseForm, setExpenseForm] = useState(initialExpenseForm);
@@ -2148,7 +2212,7 @@ function App() {
         clearPOSPanel();
         setShowPaymentModal(false); setShowReceipt(false);
         setReceiptDataForDisplay(null);
-    }, [receiptDataForDisplay, discount, orderHistory, customers, tables, updateInventory, sendToKitchen, setOrderHistory, setCustomers, setTables, clearPOSPanel, linkedCustomerId, useLoyaltyPoints, actualLoyaltyAmountPaid, pointsNeededForPayment, paymentSplits, selectedTableId, selectedOrderId, settings.serviceChargeRate, currentOrderNotes, totalAfterDiscount, tax, serviceChargeAmount]);
+    }, [receiptDataForDisplay, discount, orderHistory, customers, tables, updateInventory, sendToKitchen, setOrderHistory, setCustomers, setTables, clearPOSPanel, linkedCustomerId, useLoyaltyPoints, actualLoyaltyAmountPaid, pointsNeededForPayment, paymentSplits, selectedTableId, selectedOrderId, settings.serviceChargeRate, currentOrderNotes, totalAfterDiscount, tax]);
 
 
     const markOrderComplete = useCallback((kitchenOrderId) => {
@@ -2256,6 +2320,7 @@ function App() {
     const addCustomerHandler = (newData) => {
         const newC = { ...newData, id: generateId(), createdAt: new Date().toISOString(), lastVisit: new Date().toISOString() };
         setCustomers(prev => [...prev, newC]);
+        // alert(`Customer ${newC.name} added.`); // Alert moved to the calling function for context
         return newC.id;
     };
     const updateCustomerHandler = (id, updatedData) => { setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updatedData, lastVisit: updatedData.lastVisit || c.lastVisit } : c)); alert("Customer updated."); };
@@ -2443,20 +2508,22 @@ function App() {
     };
 
     const handleAddNewCustomerFromPOS = () => {
+        // Instead of switching tabs, show the modal
         setShowAddCustomerModalPOS(true);
     };
 
     const handleCustomerAddedFromModal = (newCustomerData) => {
-        const newCustomerId = addCustomerHandler(newCustomerData);
+        const newCustomerId = addCustomerHandler(newCustomerData); // Use existing handler to add to main list
         if (newCustomerId) {
-            const newCustomer = customers.find(c => c.id === newCustomerId);
+            const newCustomer = customers.find(c => c.id === newCustomerId); // Get the full new customer object
             if (newCustomer) {
                 setCustomerName(newCustomer.name);
                 setLinkedCustomerId(newCustomer.id);
                 setCustomerSearchMessage(`Selected: ${newCustomer.name} (Phone: ${newCustomer.phone || 'N/A'})`);
-                setCustomerPhoneSearchInput(newCustomer.phone || '');
-                setShowAddCustomerButtonPOS(false);
+                setCustomerPhoneSearchInput(newCustomer.phone || ''); // Update search input with new phone
+                setShowAddCustomerButtonPOS(false); // Hide the "Add New" button
 
+                // If an order is active in POS, link this new customer to it
                 if (selectedOrderId) {
                     setOrderHistory(prevOH => prevOH.map(o => o.id === selectedOrderId ? {...o, customerId: newCustomer.id, customer: newCustomer.name, linkedActiveOrderLabel: newCustomer.name } : o));
                     if (selectedTableId) {
@@ -2471,7 +2538,7 @@ function App() {
                 alert(`Customer ${newCustomer.name} added and linked to current order.`);
             }
         }
-        setShowAddCustomerModalPOS(false);
+        setShowAddCustomerModalPOS(false); // Close the modal
     };
 
 
@@ -2480,7 +2547,7 @@ function App() {
         const remainingForNewSplit = Math.max(0, totalAmountToCoverBySplits - currentTotalPaidBySplits);
         setPaymentSplits(prevSplits => [
             ...prevSplits,
-            { id: generateId(), method: 'card', amount: remainingForNewSplit.toFixed(2), tendered: '' }
+            { id: generateId(), method: 'card', amount: remainingForNewSplit.toFixed(2), tendered: '' } // Default to card, tendered empty
         ]);
     };
 
@@ -2489,17 +2556,18 @@ function App() {
             prevSplits.map(split => {
                 if (split.id === splitId) {
                     const updatedSplit = { ...split, [field]: value };
-                    if (field === 'amount') {
+                    if (field === 'amount') { // When amount changes
                         if (updatedSplit.method === 'cash') {
+                             // If tendered is less than new amount, or if tendered is empty, update tendered
                             if ((parseFloat(updatedSplit.tendered) || 0) < (parseFloat(value) || 0) || updatedSplit.tendered === '') {
                                 updatedSplit.tendered = (parseFloat(value) || 0).toFixed(2);
                             }
                         }
-                    } else if (field === 'method') {
-                        if (value === 'cash' && !updatedSplit.tendered) {
-                            updatedSplit.tendered = updatedSplit.amount;
+                    } else if (field === 'method') { // When payment method changes
+                        if (value === 'cash' && !updatedSplit.tendered) { // If switching to cash and tendered is empty
+                            updatedSplit.tendered = updatedSplit.amount; // Default tendered to amount
                         } else if (value !== 'cash') {
-                            delete updatedSplit.tendered;
+                            delete updatedSplit.tendered; // Remove tendered if not cash
                         }
                     }
                     return updatedSplit;
@@ -2768,7 +2836,7 @@ function App() {
                     <AddCustomerModalPOS
                         onClose={() => setShowAddCustomerModalPOS(false)}
                         onAddCustomerAndSelect={handleCustomerAddedFromModal}
-                        initialPhone={customerPhoneSearchInput}
+                        initialPhone={customerPhoneSearchInput} // Pass the searched phone number
                     />
                 )}
 
@@ -2923,7 +2991,7 @@ function App() {
                      </div>
                 )}
 
-                {activeTab === 'dashboard' && <DashboardView orderHistory={orderHistory} products={products} customers={customers} expenses={expenses} />}
+                {activeTab === 'dashboard' && <DashboardView orderHistory={orderHistory} products={products} customers={customers} />}
                 {activeTab === 'support' && <SupportView addSupportTicket={addSupportTicket} supportTickets={supportTickets} emailJsReady={emailJsReady} />}
 
                 {showOptionsModal && productForOptions && (<OptionsSelectionModal product={productForOptions} onClose={handleOptionsModalClose} onAddToCart={addConfiguredItemToOrder} />)}
