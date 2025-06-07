@@ -1,4 +1,3 @@
-
 // POS Main.js
 
 console.log("React script start - Multi-Order Table Version with Suspend/Resume & Settings");
@@ -744,7 +743,7 @@ function AdminView({
         </div>
     );
 }
-function DashboardView({ orderHistory, products, customers }) {
+function DashboardView({ orderHistory, products, customers,expenses }) {
     const [dateFilter, setDateFilter] = React.useState({ from: '', to: '' });
 
     // Filter orders by date
@@ -771,6 +770,24 @@ function DashboardView({ orderHistory, products, customers }) {
     const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
     const totalDiscountsGiven = filteredOrders.reduce((sum, order) => sum + (order.discount || 0), 0);
     const totalUniqueCustomers = [...new Set(filteredOrders.map(o => o.customerId).filter(Boolean))].length;
+
+    // ...existing code in DashboardView...
+
+// --- Expenses by Category ---
+const expensesByCategory = {};
+(expenses || []).forEach(exp => {
+    const cat = exp.category || 'Uncategorized';
+    expensesByCategory[cat] = (expensesByCategory[cat] || 0) + (parseFloat(exp.amount) || 0);
+});
+const expensesByCategoryArr = Object.entries(expensesByCategory).sort(([,a],[,b]) => b-a);
+
+// --- Expenses by Date ---
+const expensesByDate = {};
+(expenses || []).forEach(exp => {
+    const date = exp.date || '';
+    expensesByDate[date] = (expensesByDate[date] || 0) + (parseFloat(exp.amount) || 0);
+});
+const expensesByDateArr = Object.entries(expensesByDate).sort();
 
     // Sales by Category
     const categorySales = {};
@@ -822,17 +839,24 @@ function DashboardView({ orderHistory, products, customers }) {
     // Low Stock Items
     const lowStockItems = activeProducts.filter(p => p.productType === 'standard' && !p.isTemporarilyUnavailable && p.stock > 0 && p.stock <= p.minStock);
 
-    // --- Chart rendering ---
-   React.useEffect(() => {
-    let salesChartInstance = null;
-    let paymentChartInstance = null;
-
-    // Destroy previous chart if exists
+   // --- Chart rendering ---
+React.useEffect(() => {
+    // Destroy previous chart instances
     if (window.salesChartInstance) {
         window.salesChartInstance.destroy();
+        window.salesChartInstance = null;
     }
     if (window.paymentChartInstance) {
         window.paymentChartInstance.destroy();
+        window.paymentChartInstance = null;
+    }
+    if (window.expensesByCategoryChartInstance) {
+        window.expensesByCategoryChartInstance.destroy();
+        window.expensesByCategoryChartInstance = null;
+    }
+    if (window.expensesByDateChartInstance) {
+        window.expensesByDateChartInstance.destroy();
+        window.expensesByDateChartInstance = null;
     }
 
     // Sales by Category Bar Chart
@@ -840,7 +864,7 @@ function DashboardView({ orderHistory, products, customers }) {
         window.salesChartInstance = new Chart(document.getElementById('salesByCategoryChart').getContext('2d'), {
             type: 'bar',
             data: {
-                labels: salesByCategory.map(([category]) => category),
+                labels: salesByCategory.map(([cat]) => cat),
                 datasets: [{
                     label: 'Sales ($)',
                     data: salesByCategory.map(([, amount]) => amount),
@@ -878,6 +902,46 @@ function DashboardView({ orderHistory, products, customers }) {
         });
     }
 
+    // Expenses by Category Bar Chart
+    if (window.Chart && document.getElementById('expensesByCategoryChart')) {
+        window.expensesByCategoryChartInstance = new Chart(document.getElementById('expensesByCategoryChart').getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: expensesByCategoryArr.map(([cat]) => cat),
+                datasets: [{
+                    label: 'Expenses ($)',
+                    data: expensesByCategoryArr.map(([, amount]) => amount),
+                    backgroundColor: 'rgba(255, 99, 132, 0.6)'
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+
+    // Expenses by Date Line Chart
+    if (window.Chart && document.getElementById('expensesByDateChart')) {
+        window.expensesByDateChartInstance = new Chart(document.getElementById('expensesByDateChart').getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: expensesByDateArr.map(([date]) => date),
+                datasets: [{
+                    label: 'Expenses ($)',
+                    data: expensesByDateArr.map(([, amount]) => amount),
+                    fill: false,
+                    borderColor: 'rgba(255, 99, 132, 0.8)',
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { position: 'bottom' } }
+            }
+        });
+    }
+
     // Cleanup on unmount or before next render
     return () => {
         if (window.salesChartInstance) {
@@ -888,8 +952,16 @@ function DashboardView({ orderHistory, products, customers }) {
             window.paymentChartInstance.destroy();
             window.paymentChartInstance = null;
         }
+        if (window.expensesByCategoryChartInstance) {
+            window.expensesByCategoryChartInstance.destroy();
+            window.expensesByCategoryChartInstance = null;
+        }
+        if (window.expensesByDateChartInstance) {
+            window.expensesByDateChartInstance.destroy();
+            window.expensesByDateChartInstance = null;
+        }
     };
-}, [salesByCategory, paymentMethodStats]);
+}, [salesByCategory, paymentMethodStats, expensesByCategoryArr, expensesByDateArr, expenses]);
 
     // --- Dashboard HTML ---
     return (
@@ -908,6 +980,11 @@ function DashboardView({ orderHistory, products, customers }) {
                 <div className="dashboard-card"><h3>Avg. Order Value</h3><p className="metric-value">${averageOrderValue.toFixed(2)}</p></div>
                 <div className="dashboard-card"><h3>Total Discounts</h3><p className="metric-value">${totalDiscountsGiven.toFixed(2)}</p></div>
                 <div className="dashboard-card"><h3>Total Customers</h3><p className="metric-value">{totalUniqueCustomers}</p></div>
+                {/* --- Expenses by Category Chart --- */}
+<div className="dashboard-card">
+    <h3>Expenses by Category</h3>
+    <canvas id="expensesByCategoryChart" width="400" height="200"></canvas>
+</div>
                 {/* --- Chart.js canvases --- */}
                 <div className="dashboard-card">
                     <h3>Sales by Category</h3>
@@ -917,6 +994,12 @@ function DashboardView({ orderHistory, products, customers }) {
                     <h3>Payment Methods</h3>
                     <canvas id="paymentMethodsChart" width="400" height="200"></canvas>
                 </div>
+
+                {/* --- Expenses by Date Chart --- */}
+<div className="dashboard-card">
+    <h3>Expenses Over Time</h3>
+    <canvas id="expensesByDateChart" width="400" height="200"></canvas>
+</div>
                 {/* --- Top Items by Quantity --- */}
                 <div className="dashboard-card"><h3>Top Items by Quantity (Top 5)</h3>{itemSalesByQuantity.length > 0 ? (<ul>{itemSalesByQuantity.slice(0,5).map(([name, qty]) => <li key={name}><span>{name}</span> <span>{qty} sold</span></li>)}</ul>) : <p className="empty-message" style={{fontSize: '14px', padding: '0'}}>No sales data.</p>}</div>
                 {/* --- Top Items by Revenue --- */}
@@ -927,7 +1010,7 @@ function DashboardView({ orderHistory, products, customers }) {
         </div>
     );
 }
-// ...existing code...
+
 function OrderHistoryView({ orderHistory, markOrderAsDelivered, tables, onResumeOrder, onInitiateReturn }) {
      return (
         <div className="history-container">
@@ -1068,11 +1151,14 @@ function SupportView({ addSupportTicket, supportTickets, emailJsReady }) {
         e.preventDefault();
         if (!inquiryForm.name.trim() || !inquiryForm.message.trim()) { alert("Please enter your name and inquiry message."); return; }
         const isEmailJsConfigured = EMAILJS_SERVICE_ID && EMAILJS_SERVICE_ID !== 'YOUR_SERVICE_ID' && EMAILJS_TEMPLATE_ID && EMAILJS_TEMPLATE_ID !== 'YOUR_TEMPLATE_ID' && EMAILJS_USER_ID && EMAILJS_USER_ID !== 'YOUR_USER_ID_PUBLIC_KEY';
-        if (!isEmailJsConfigured) {
-            alert("EmailJS is not fully configured with your service details. Your inquiry will be saved locally only.");
-            addSupportTicket({...inquiryForm, email_status: 'Not configured, saved locally'});
-            setInquiryForm({ name: '', email: '', message: '' }); setShowConfirmation(true); setTimeout(() => setShowConfirmation(false), 7000); return;
-        }
+if (!isEmailJsConfigured) {
+    alert("EmailJS is not fully configured with your service details. Your inquiry will be saved locally only.");
+    addSupportTicket({...inquiryForm, email_status: 'Not configured, saved locally'});
+    setInquiryForm({ name: '', email: '', message: '' }); 
+    setShowConfirmation(true); 
+    setTimeout(() => setShowConfirmation(false), 7000); 
+    return;
+}
         setIsSubmitting(true);
         const templateParams = { from_name: inquiryForm.name, from_email: inquiryForm.email || 'Not provided', to_name: 'Cafe POS Admin', message: inquiryForm.message };
         if (typeof emailjs !== 'undefined' && typeof emailjs.send === 'function' && emailJsReady) {
@@ -1527,6 +1613,23 @@ function SettingsView({ settings, onUpdateSettings }) {
                 </div>
             </div>
             <div className="settings-group-card">
+    <h3>Stock Settings</h3>
+    <div className="settings-form-grid">
+        <div className="form-group form-group-checkbox">
+            <input
+                type="checkbox"
+                id="disableStock"
+                name="disableStock"
+                checked={currentSettings.disableStock}
+                onChange={handleSettingChange}
+            />
+            <label htmlFor="disableStock" className="form-label">
+                Disable Stock Control (Allow unlimited sales)
+            </label>
+        </div>
+    </div>
+</div>
+            <div className="settings-group-card">
                 <h3>Financial Settings</h3>
                 <div className="settings-form-grid">
                      <div className="form-group">
@@ -1581,10 +1684,12 @@ function SettingsView({ settings, onUpdateSettings }) {
 }
 
 // --- ExpensesView Component ---
-function ExpensesView({ expenses, onAddExpense, onRemoveExpense }) {
+
+function ExpensesView({ expenses, onAddExpense, onRemoveExpense, onUpdateExpense }) {
     const initialExpenseForm = { description: '', amount: '', date: new Date().toISOString().split('T')[0], category: '' };
     const [expenseForm, setExpenseForm] = useState(initialExpenseForm);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [editingExpenseId, setEditingExpenseId] = useState(null);
 
     const handleExpenseChange = (e) => {
         const { name, value } = e.target;
@@ -1598,27 +1703,47 @@ function ExpensesView({ expenses, onAddExpense, onRemoveExpense }) {
             return;
         }
         setIsSubmitting(true);
-        onAddExpense({
-            description: expenseForm.description.trim(),
-            amount: parseFloat(expenseForm.amount),
-            date: expenseForm.date,
-            category: expenseForm.category.trim() || 'Uncategorized'
-        });
+        if (editingExpenseId) {
+            onUpdateExpense(editingExpenseId, {
+                ...expenseForm,
+                amount: parseFloat(expenseForm.amount),
+            });
+            setEditingExpenseId(null);
+        } else {
+            onAddExpense({
+                ...expenseForm,
+                amount: parseFloat(expenseForm.amount),
+            });
+        }
         setExpenseForm(initialExpenseForm);
         setIsSubmitting(false);
-        alert("Expense added!");
+        alert(editingExpenseId ? "Expense updated!" : "Expense added!");
     };
-    
+
+    const handleEditExpense = (expense) => {
+        setExpenseForm({
+            description: expense.description,
+            amount: expense.amount,
+            date: expense.date,
+            category: expense.category,
+        });
+        setEditingExpenseId(expense.id);
+    };
+
+    const handleCancelEdit = () => {
+        setEditingExpenseId(null);
+        setExpenseForm(initialExpenseForm);
+    };
+
     const sortedExpenses = useMemo(() => {
         return [...expenses].sort((a, b) => new Date(b.date) - new Date(a.date));
     }, [expenses]);
-
 
     return (
         <div className="expenses-container">
             <h2>Manage Expenses</h2>
             <div className="admin-section">
-                <h3>Add New Expense</h3>
+                <h3>{editingExpenseId ? "Edit Expense" : "Add New Expense"}</h3>
                 <form onSubmit={handleAddExpenseSubmit} className="product-management-form" style={{gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', alignItems: 'end'}}>
                     <div className="form-group">
                         <label htmlFor="expenseDescription" className="form-label">Description:</label>
@@ -1638,8 +1763,13 @@ function ExpensesView({ expenses, onAddExpense, onRemoveExpense }) {
                     </div>
                     <div className="form-group" style={{alignSelf: 'end'}}>
                         <button type="submit" className="btn btn-success" disabled={isSubmitting} style={{width: '100%'}}>
-                            {isSubmitting ? 'Adding...' : '+ Add Expense'}
+                            {isSubmitting ? (editingExpenseId ? 'Updating...' : 'Adding...') : (editingExpenseId ? 'Update Expense' : '+ Add Expense')}
                         </button>
+                        {editingExpenseId && (
+                            <button type="button" className="btn btn-secondary" style={{marginTop: '6px', width: '100%'}} onClick={handleCancelEdit} disabled={isSubmitting}>
+                                Cancel Edit
+                            </button>
+                        )}
                     </div>
                 </form>
             </div>
@@ -1665,7 +1795,8 @@ function ExpensesView({ expenses, onAddExpense, onRemoveExpense }) {
                                     <td>{expense.category}</td>
                                     <td style={{textAlign: 'right'}}>${expense.amount.toFixed(2)}</td>
                                     <td>
-                                        <button className="btn btn-danger btn-sm" onClick={() => onRemoveExpense(expense.id)}>Delete</button>
+                                        <button className="btn btn-edit btn-sm" onClick={() => handleEditExpense(expense)}>Edit</button>
+                                        <button className="btn btn-danger btn-sm" onClick={() => onRemoveExpense(expense.id)} style={{marginLeft: '5px'}}>Delete</button>
                                     </td>
                                 </tr>
                             ))}
@@ -1676,8 +1807,6 @@ function ExpensesView({ expenses, onAddExpense, onRemoveExpense }) {
         </div>
     );
 }
-
-// ...existing code...
 
 // --- ReturnItemsModal Component ---
 function ReturnItemsModal({ order, onClose, onProcessReturn }) {
@@ -1813,7 +1942,7 @@ function ReturnItemsModal({ order, onClose, onProcessReturn }) {
         </div>
     );
 }
-// ...existing code...
+
 function App() {
     console.log("App function entered - Multi-Order Table Version with Suspend/Resume & Settings");
     const [activeTab, setActiveTab] = useState('pos');
@@ -1966,8 +2095,18 @@ function App() {
         }
         if (product.isArchived) { alert(`${product.name} is archived and cannot be added.`); return; }
         if (product.isTemporarilyUnavailable) { alert(`${product.name} is temporarily unavailable.`); return; }
-        let effectiveStock = product.productType === 'bundle' ? calculateBundleAvailability(product, products) : product.stock;
-        if (effectiveStock <= 0) { alert(`${product.name} is out of stock.`); return; }
+        if (!settings.disableStock) {
+            let stockToCheck = product.productType === 'standard' ? product.stock : calculateBundleAvailability(product, products);
+            if (stockToCheck <= 0) {
+                alert(`Sorry, ${product.name} is out of stock.`);
+                return;
+            }
+            if (product.productType === 'standard' && orderItems.some(item => item.productId === product.id && item.quantity >= stockToCheck)) {
+                alert(`Only ${stockToCheck} ${product.name} available. Setting to max.`);
+                return;
+            }
+}
+// If disableStock is true, skip stock check and allow sale
         const hasOptions = (product.variationGroups?.length > 0 && product.variationGroups.some(vg => vg.options?.length > 0)) || (product.modifierGroups?.length > 0 && product.modifierGroups.some(mg => mg.options?.length > 0));
         if (hasOptions && product.productType === 'standard') { setProductForOptions(product); setShowOptionsModal(true); }
         else addConfiguredItemToOrder(product, []);
@@ -1996,19 +2135,22 @@ function App() {
         }
         const existingItemIndex = orderItems.findIndex(item => item.productId === product.id && (product.productType === 'bundle' || JSON.stringify(item.selectedOptions.map(o=>o.optionId).sort()) === JSON.stringify(selectedOptionsArray.map(o=>o.optionId).sort())));
         if (existingItemIndex > -1) {
-            const updatedOrderItems = [...orderItems]; const itemToUpdate = updatedOrderItems[existingItemIndex];
-            let stockToCheck = product.productType === 'standard' ? products.find(p => p.id === product.id)?.stock : calculateBundleAvailability(product, products);
-            if (itemToUpdate.quantity + 1 > stockToCheck) { alert(`Not enough stock for ${displayName}. Max: ${stockToCheck}.`); return; }
-            updatedOrderItems[existingItemIndex] = { ...itemToUpdate, quantity: itemToUpdate.quantity + 1 };
-            setOrderItems(updatedOrderItems);
+            const existingItem = orderItems[existingItemIndex];
+            const newQuantity = existingItem.quantity + 1;
+            if (!settings.disableStock) {
+                let stockToCheck = product.productType === 'standard' ? product.stock : calculateBundleAvailability(product, products);
+                if (newQuantity > stockToCheck) {
+                    alert(`Only ${stockToCheck} ${product.name} available. Setting to max.`);
+                    return;
+                }
+            }
+            const updatedItem = { ...existingItem, quantity: newQuantity, itemPriceWithModifiers: currentPrice, displayName: displayName, selectedOptions: selectedOptionsArray };
+            setOrderItems(prevItems => prevItems.map(item => item.orderItemId === existingItem.orderItemId ? updatedItem : item));
         } else {
-            let stockToCheck = product.productType === 'standard' ? product.stock : calculateBundleAvailability(product, products);
-            if (1 > stockToCheck) { alert(`Not enough stock for ${displayName}.`); return; }
             const newOrderItem = {
-                orderItemId: generateId(), productId: product.id, name: product.name, basePrice: product.price, quantity: 1,
-                selectedOptions: product.productType === 'standard' ? selectedOptionsArray.map(so => ({ groupName: so.groupName, optionName: so.optionName, priceChange: so.priceChange, groupId: so.groupId, optionId: so.optionId })) : [],
-                itemPriceWithModifiers: currentPrice, displayName: displayName, image: product.image, category: product.category, productType: product.productType,
-                bundleItems: product.bundleItems || [], bundleComponentDetails: product.productType === 'bundle' ? componentDetailsForDisplay : []
+                orderItemId: generateId(), productId: product.id, name: product.name, displayName: displayName,
+                itemPriceWithModifiers: currentPrice, quantity: 1, selectedOptions: selectedOptionsArray,
+                productType: product.productType, bundleItems: product.bundleItems || []
             };
             setOrderItems(prevItems => [...prevItems, newOrderItem]);
         }
@@ -2033,11 +2175,12 @@ function App() {
                 const productDetails = products.find(p => p.id === item.productId);
                 if (!productDetails) return item;
 
-                let stockToCheck = productDetails.productType === 'standard' ? productDetails.stock : calculateBundleAvailability(productDetails, products);
-                if (newQuantity > stockToCheck) {
-                    alert(`Only ${stockToCheck} ${item.name} available. Setting to max.`);
-                    newQuantity = stockToCheck;
-                }
+  let stockToCheck = productDetails.productType === 'standard' ? productDetails.stock : calculateBundleAvailability(productDetails, products);
+if (!settings.disableStock && newQuantity > stockToCheck) {
+    alert(`Only ${stockToCheck} ${item.name} available. Setting to max.`);
+    newQuantity = stockToCheck;
+}
+// If disableStock is true, allow any quantity (even if stock is negative)
                 return { ...item, quantity: newQuantity };
             }
             return item;
@@ -2054,14 +2197,13 @@ function App() {
                 if (orderItem.productType === 'standard') {
                     const productIndex = newProducts.findIndex(p => p.id === orderItem.productId);
                     if (productIndex > -1) {
-                        newProducts[productIndex].stock = Math.max(0, newProducts[productIndex].stock - quantityToChange);
+newProducts[productIndex].stock = newProducts[productIndex].stock - quantityToChange;
                     }
                 } else if (orderItem.productType === 'bundle') {
                     (orderItem.bundleItems || []).forEach(bundleComponent => {
                         const componentIndex = newProducts.findIndex(p => p.id === bundleComponent.productId);
                         if (componentIndex > -1) {
-                            newProducts[componentIndex].stock = Math.max(0, newProducts[componentIndex].stock - (bundleComponent.quantity * quantityToChange));
-                        }
+newProducts[componentIndex].stock = newProducts[componentIndex].stock - (bundleComponent.quantity * quantityToChange);                        }
                     });
                 }
             });
@@ -2977,6 +3119,14 @@ function App() {
             alert("Expense record deleted.");
         }
     };
+  // Add this function here:
+    const handleUpdateExpense = (expenseId, updatedExpenseData) => {
+        setExpenses(prevExpenses =>
+            prevExpenses.map(exp =>
+                exp.id === expenseId ? { ...exp, ...updatedExpenseData } : exp
+            )
+        );
+    };
 
 
     const mainTabs = [
@@ -3209,8 +3359,15 @@ function App() {
                 {activeTab === 'history' && <OrderHistoryView orderHistory={orderHistory} markOrderAsDelivered={markOrderAsDelivered} tables={tables} onResumeOrder={handleResumeOrder} onInitiateReturn={handleInitiateReturn} />}
                 {activeTab === 'kitchen' && <KitchenDisplayView kitchenOrders={kitchenOrders} markOrderComplete={markOrderComplete} />}
                 {activeTab === 'customers' && <CustomersView customers={customers} addCustomer={addCustomerHandler} updateCustomer={updateCustomerHandler} removeCustomer={removeCustomerHandler} orderHistory={orderHistory} onCustomerAddedFromPOS={handleCustomerAddedFromModal} />}
-                {activeTab === 'expenses' && adminAccessGranted && <ExpensesView expenses={expenses} onAddExpense={handleAddExpense} onRemoveExpense={handleRemoveExpense} />}
 
+{activeTab === 'expenses' && adminAccessGranted && (
+    <ExpensesView
+        expenses={expenses}
+        onAddExpense={handleAddExpense}
+        onRemoveExpense={handleRemoveExpense}
+        onUpdateExpense={handleUpdateExpense}
+    />
+)}
 
                 {activeTab === 'admin' && adminAccessGranted && <AdminView products={products} addProduct={addProductHandler} updateProduct={updateProductHandler} removeProduct={removeProductHandler} archiveProduct={archiveProductHandler} unarchiveProduct={unarchiveProductHandler} categories={categories} onRenameCategory={handleRenameCategory} onExportProducts={handleExportProducts} onImportProducts={handleImportProducts} tables={tables} addTable={addTableHandler} updateTable={updateTableHandler} removeTable={removeTableHandler} />}
                 {activeTab === 'settings' && adminAccessGranted && <SettingsView settings={settings} onUpdateSettings={handleUpdateSettings} />}
@@ -3227,7 +3384,7 @@ function App() {
                      </div>
                 )}
 
-                {activeTab === 'dashboard' && <DashboardView orderHistory={orderHistory} products={products} customers={customers} />}
+                {activeTab === 'dashboard' && <DashboardView orderHistory={orderHistory} products={products} customers={customers} expenses={expenses} />}
                 {activeTab === 'support' && <SupportView addSupportTicket={addSupportTicket} supportTickets={supportTickets} emailJsReady={emailJsReady} />}
 
                 {showOptionsModal && productForOptions && (<OptionsSelectionModal product={productForOptions} onClose={handleOptionsModalClose} onAddToCart={addConfiguredItemToOrder} />)}
