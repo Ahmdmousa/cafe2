@@ -174,7 +174,7 @@ const generateId = () => {
     if (typeof window.uuid !== 'undefined' && typeof window.uuid.v4 === 'function') {
         return window.uuid.v4();
     }
-    return 'fb-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    return 'fb-' + Date.now() + '-' + Math.random().toString(36).substring(2, 11);
 };
 
 const EMAILJS_SERVICE_ID = 'service_auw7spm';
@@ -1113,29 +1113,39 @@ function KitchenDisplayView({ kitchenOrders, markOrderComplete }) {
         <div className="kds-container">
             <h2>Kitchen Display System</h2>
             {pendingOrders.length === 0 && completedOrders.length === 0 && <p className="empty-message">No kitchen orders yet.</p>}
-            {pendingOrders.length > 0 && (<><h3>Pending Orders ({pendingOrders.length})</h3><div className="kitchen-order-grid">
-                {pendingOrders.map(order => (
-                    <div key={order.id} className="kitchen-order">
-                        <h3>Order Ticket #{order.id.slice(0,6)}</h3>
-                        <p>For: {order.customer} (Main Order: #{order.mainOrderId.slice(0,6)})</p>
-                        <p>Time: {new Date(order.timestamp).toLocaleTimeString()}</p>
-                        <ul>{order.items.map(item => ( <li key={item.id + '-' + order.id}> {item.name} x{item.quantity} {item.options && <div style={{fontSize: '0.9em', color: 'var(--grey)'}}>&nbsp;&nbsp;({item.options})</div>} </li> ))}</ul>
-                        {order.notes && <p className="order-notes-display-kds"><strong>Notes:</strong> {order.notes}</p>}
-                        <button className="complete-btn" onClick={() => markOrderComplete(order.id)}>Mark as Complete</button>
+            {pendingOrders.length > 0 && (
+                <>
+                    <h3>Pending Orders ({pendingOrders.length})</h3>
+                    <div className="kitchen-order-grid">
+                        {pendingOrders.map(order => (
+                            <div key={order.id} className="kitchen-order">
+                                <h3>Order Ticket #{order.id.slice(0,6)}</h3>
+                                <p>For: {order.customer} (Main Order: #{order.mainOrderId.slice(0,6)})</p>
+                                <p>Time: {new Date(order.timestamp).toLocaleTimeString()}</p>
+                                <ul>{order.items.map(item => ( <li key={item.id + '-' + order.id}> {item.name} x{item.quantity} {item.options && <div style={{fontSize: '0.9em', color: 'var(--grey)'}}>&nbsp;&nbsp;({item.options})</div>} </li> ))}</ul>
+                                {order.notes && <p className="order-notes-display-kds"><strong>Notes:</strong> {order.notes}</p>}
+                                <button className="complete-btn" onClick={() => markOrderComplete(order.id)}>Mark as Complete</button>
+                            </div>
+                        ))}
                     </div>
-                ))}
-            </div></>)}
-            {completedOrders.length > 0 && (<><h3 style={{marginTop: '30px', marginBottom: '15px', borderTop: '1px solid #ccc', paddingTop: '20px'}}>Recently Completed (Kitchen)</h3><div className="kitchen-order-grid">
-                {completedOrders.map(order => (
-                    <div key={order.id} className="kitchen-order" style={{borderColor: 'var(--grey)', opacity: 0.7}}>
-                        <h3>Order Ticket #{order.id.slice(0,6)}</h3>
-                        <p>For: {order.customer} (Main Order: #{order.mainOrderId.slice(0,6)})</p>
-                        <p>Time: {new Date(order.timestamp).toLocaleTimeString()}</p>
-                        <ul>{order.items.map(item => ( <li key={item.id + '-' + order.id}>{item.name} x{item.quantity} {item.options && <div style={{fontSize: '0.9em', color: 'var(--grey)'}}>&nbsp;&nbsp;({item.options})</div>}</li> ))}</ul>
-                        {order.notes && <p className="order-notes-display-kds"><strong>Notes:</strong> {order.notes}</p>}
+                </>
+            )}
+            {completedOrders.length > 0 && (
+                <>
+                    <h3 style={{marginTop: '30px', marginBottom: '15px', borderTop: '1px solid #ccc', paddingTop: '20px'}}>Recently Completed (Kitchen)</h3>
+                    <div className="kitchen-order-grid">
+                        {completedOrders.map(order => (
+                            <div key={order.id} className="kitchen-order" style={{borderColor: 'var(--grey)', opacity: 0.7}}>
+                                <h3>Order Ticket #{order.id.slice(0,6)}</h3>
+                                <p>For: {order.customer} (Main Order: #{order.mainOrderId.slice(0,6)})</p>
+                                <p>Time: {new Date(order.timestamp).toLocaleTimeString()}</p>
+                                <ul>{order.items.map(item => ( <li key={item.id + '-' + order.id}>{item.name} x{item.quantity} {item.options && <div style={{fontSize: '0.9em', color: 'var(--grey)'}}>&nbsp;&nbsp;({item.options})</div>}</li> ))}</ul>
+                                {order.notes && <p className="order-notes-display-kds"><strong>Notes:</strong> {order.notes}</p>}
+                            </div>
+                        ))}
                     </div>
-                ))}
-            </div></>)}
+                </>
+            )}
         </div>
     );
 }
@@ -1212,7 +1222,7 @@ function CustomersView({ customers, addCustomer, updateCustomer, removeCustomer,
 
     const handleInputChange = (e) => { const { name, value, type } = e.target; setCustomerForm(prev => ({ ...prev, [name]: type === 'number' ? parseInt(value) || 0 : value })); };
     const resetForm = () => { setCustomerForm(initialFormState); setIsEditing(false); };
-    const handleEditClick = (customer) => { setIsEditing(true); setCustomerForm({ ...customer, loyaltyPoints: customer.loyaltyPoints || 0, notes: customer.notes || '', lastVisit: customer.lastVisit || '' }); setViewingOrdersForCustomer(null); window.scrollTo(0,0); };
+    const handleEditClick = (customer) => { setIsEditing(true); setCustomerForm({ ...customer, loyaltyPoints: customer.loyaltyPoints || 0, notes: customer.notes || '', lastVisit: customer.lastVisit || '' }); setViewingOrdersForCustomer(null); };
     const handleSubmit = (e) => {
         e.preventDefault();
         if (!customerForm.name.trim()) { alert("Customer name is required."); return; }
@@ -1410,7 +1420,7 @@ function TableActionsModal({
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal table-actions-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="modal-header">
-                     <h3 className="modal-title">Table: {table.name}
+                    <h3 className="modal-title">Table: {table.name}
                         <span style={{fontSize: '0.8em', fontWeight: 'normal', marginLeft: '10px'}}>
                             ({tableOverallStatus.replace(/_/g, ' ')})
                         </span>
@@ -1944,6 +1954,151 @@ function ReturnItemsModal({ order, onClose, onProcessReturn }) {
 }
 
 function App() {
+// ...existing code...
+
+function App() {
+    console.log("App function entered - Multi-Order Table Version with Suspend/Resume & Settings");
+
+    // --- LOGIN STATE ---
+    const [isLoggedIn, setIsLoggedIn] = React.useState(() => {
+        return !!window.localStorage.getItem('pos_logged_in');
+    });
+    const [loginError, setLoginError] = React.useState('');
+    const [loginPin, setLoginPin] = React.useState('');
+
+    // --- REST OF YOUR STATE ---
+    const [activeTab, setActiveTab] = useState('pos');
+    const [activeCategory, setActiveCategory] = useState('All');
+    const [searchTerm, setSearchTerm] = useState('');
+    const [orderItems, setOrderItems] = useState([]);
+    const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [showReceipt, setShowReceipt] = useState(false);
+    const [orderHistory, setOrderHistory] = useLocalStorage('posOrderHistory_v_multiOrder_1', []);
+    const [customers, setCustomers] = useLocalStorage('posCustomers_v_multiOrder_1', []);
+    const [tables, setTables] = useLocalStorage('posTables_v_multiOrder_1', []);
+    const [products, setProducts] = useLocalStorage('posProducts_v_multiOrder_1', initialProductsData);
+    const [kitchenOrders, setKitchenOrders] = useLocalStorage('posKitchenOrders_v_multiOrder_1', []);
+    const [supportTickets, setSupportTickets] = useLocalStorage('posSupportTickets_v_multiOrder_1', []);
+    const [expenses, setExpenses] = useLocalStorage('posExpenses_v1', initialExpenses);
+    const [discount, setDiscount] = useState({ type: 'none', value: 0 });
+    const [emailJsReady, setEmailJsReady] = useState(false);
+    const [showOptionsModal, setShowOptionsModal] = useState(false);
+    const [productForOptions, setProductForOptions] = useState(null);
+    const [selectedTableId, setSelectedTableId] = useState(null);
+    const [selectedOrderId, setSelectedOrderId] = useState(null);
+    const [customerName, setCustomerName] = useState('');
+    const [showTableActionsModal, setShowTableActionsModal] = useState(false);
+    const [tableForActions, setTableForActions] = useState(null);
+
+    const [customerPhoneSearchInput, setCustomerPhoneSearchInput] = useState('');
+    const [customerSearchMessage, setCustomerSearchMessage] = useState('');
+    const [showAddCustomerButtonPOS, setShowAddCustomerButtonPOS] = useState(false);
+    const [linkedCustomerId, setLinkedCustomerId] = useState(null);
+
+    const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
+    const [loyaltyAmountToPayInput, setLoyaltyAmountToPayInput] = useState('');
+
+    const [paymentSplits, setPaymentSplits] = useState([]);
+    const [receiptDataForDisplay, setReceiptDataForDisplay] = useState(null);
+
+    const [settings, setSettings] = useLocalStorage('posSettings_v1', initialSettings);
+    const [showAdminPinModal, setShowAdminPinModal] = useState(false);
+    const [enteredAdminPin, setEnteredAdminPin] = useState('');
+    const [adminAccessGranted, setAdminAccessGranted] = useState(!settings.adminPin);
+    const [targetAdminTab, setTargetAdminTab] = useState('');
+
+    const [showClearOrderConfirmModal, setShowClearOrderConfirmModal] = useState(false);
+    const [currentOrderNotes, setCurrentOrderNotes] = useState('');
+
+    const [showReturnItemsModal, setShowReturnItemsModal] = useState(false);
+    const [orderForReturn, setOrderForReturn] = useState(null);
+    const [showAddCustomerModalPOS, setShowAddCustomerModalPOS] = useState(false);
+
+    // --- LOGIN HANDLER ---
+    const handleLogin = (e) => {
+        e.preventDefault();
+        if (settings.adminPin && loginPin === settings.adminPin) {
+            setIsLoggedIn(true);
+            window.localStorage.setItem('pos_logged_in', '1');
+            setLoginError('');
+        } else if (!settings.adminPin) {
+            setIsLoggedIn(true);
+            window.localStorage.setItem('pos_logged_in', '1');
+            setLoginError('');
+        } else {
+            setLoginError('Incorrect PIN. Please try again.');
+        }
+    };
+
+    const handleLogout = () => {
+        setIsLoggedIn(false);
+        window.localStorage.removeItem('pos_logged_in');
+    };
+
+    // --- LOGIN/LANDING PAGE ---
+    if (!isLoggedIn) {
+        return (
+            <div className="login-landing-container">
+                <div className="login-card">
+                    <h2>Welcome to Cafe POS</h2>
+                    <form onSubmit={handleLogin}>
+                        {settings.adminPin && (
+                            <>
+                                <label htmlFor="loginPin">Enter PIN:</label>
+                                <input
+                                    id="loginPin"
+                                    type="password"
+                                    value={loginPin}
+                                    onChange={e => setLoginPin(e.target.value)}
+                                    autoFocus
+                                    className="form-input"
+                                    maxLength={8}
+                                />
+                            </>
+                        )}
+                        {!settings.adminPin && (
+                            <p style={{color: 'var(--info)'}}>No PIN set. Click Login to continue.</p>
+                        )}
+                        <button type="submit" className="btn btn-primary" style={{marginTop: '10px'}}>Login</button>
+                        {loginError && <div className="error-message" style={{marginTop: '10px'}}>{loginError}</div>}
+                    </form>
+                </div>
+            </div>
+        );
+    }
+
+    // --- MAIN APP UI ---
+    return (
+        <>
+            <button
+                style={{
+                    position: 'fixed',
+                    top: 10,
+                    right: 10,
+                    zIndex: 1000,
+                    background: 'var(--danger)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '6px 16px',
+                    cursor: 'pointer'
+                }}
+                onClick={handleLogout}
+                title="Logout"
+            >
+                Logout
+            </button>
+            {/* --- Your existing return block below --- */}
+            <div className="app-layout">
+                {/* ...rest of your existing App return block... */}
+                {/* Copy everything from your previous return here, starting with your sidebar, main content, modals, etc. */}
+                {/* For brevity, your full return block is already present in your file and should be pasted here. */}
+            </div>
+        </>
+    );
+}
+
+// ...existing code...
     console.log("App function entered - Multi-Order Table Version with Suspend/Resume & Settings");
     const [activeTab, setActiveTab] = useState('pos');
     const [activeCategory, setActiveCategory] = useState('All');
@@ -2105,7 +2260,7 @@ function App() {
                 alert(`Only ${stockToCheck} ${product.name} available. Setting to max.`);
                 return;
             }
-}
+        }
 // If disableStock is true, skip stock check and allow sale
         const hasOptions = (product.variationGroups?.length > 0 && product.variationGroups.some(vg => vg.options?.length > 0)) || (product.modifierGroups?.length > 0 && product.modifierGroups.some(mg => mg.options?.length > 0));
         if (hasOptions && product.productType === 'standard') { setProductForOptions(product); setShowOptionsModal(true); }
@@ -2335,7 +2490,7 @@ newProducts[componentIndex].stock = newProducts[componentIndex].stock - (bundleC
         }
         const existingOrderIndex = orderHistory.findIndex(o => o.id === selectedOrderId);
         if (existingOrderIndex === -1) {
-            alert("Error: Could not find the table order to update."); return;
+            alert("Error: Could not find the order to update."); return;
         }
         const originalOrder = orderHistory[existingOrderIndex];
         const itemsForKDS = [];
@@ -2382,17 +2537,7 @@ newProducts[componentIndex].stock = newProducts[componentIndex].stock - (bundleC
             alert("This checkout is for To-Go orders only. For table orders, use 'Update Table Order & Pay'.");
             return;
         }
-        const isResumedActiveWalkin = selectedOrderId && orderHistory.find(o => o.id === selectedOrderId)?.status === 'ActiveWalkinResumed';
-        const isNewWalkin = !selectedOrderId;
-        if (!isNewWalkin && !isResumedActiveWalkin) {
-            alert("Order is not a valid To-Go order for checkout. Please check its status or resume if suspended.");
-            return;
-        }
-        if (orderItems.length === 0) {
-            alert("Add items to the To-Go order first.");
-            return;
-        }
-        setPaymentSplits([{ id: generateId(), method: 'cash', amount: total.toFixed(2), tendered: total.toFixed(2) }]);
+        const isResumedActiveWalkin = selectedOrderId && order
         setUseLoyaltyPoints(false);
         setLoyaltyAmountToPayInput('');
         setShowPaymentModal(true);
